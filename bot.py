@@ -200,6 +200,17 @@ SHEET_NAME = 'КиримЧичим'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 CREDENTIALS_FILE = 'credentials.json'
 
+# Добавляем функцию для получения списка листов
+def get_sheet_names():
+    try:
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        return [ws.title for ws in sh.worksheets()]
+    except Exception as e:
+        print(f"Ошибка при получении списка листов: {e}")
+        return []
+
 def clean_emoji(text):
     # Удаляет только эмодзи/спецсимволы в начале строки, остальной текст не трогает
     return re.sub(r'^[^\w\s]+', '', text).strip()
@@ -910,6 +921,22 @@ async def del_expense_cb(call: types.CallbackQuery):
     conn.close()
     await call.message.edit_text(f'❌ Харажат тури o\'chirildi: {name}')
     await call.answer()
+
+@dp.message_handler(commands=['check_sheets'], state='*')
+async def check_sheets_cmd(msg: types.Message, state: FSMContext):
+    if msg.from_user.id not in ADMINS:
+        await msg.answer('Faqat admin uchun!')
+        return
+    await state.finish()
+    
+    sheet_names = get_sheet_names()
+    if sheet_names:
+        response = "📋 Доступные листы в Google Sheet:\n\n"
+        for i, name in enumerate(sheet_names, 1):
+            response += f"{i}. {name}\n"
+        await msg.answer(response)
+    else:
+        await msg.answer("❌ Не удалось получить список листов")
 
 @dp.message_handler(commands=['userslist'], state='*')
 async def users_list_cmd(msg: types.Message, state: FSMContext):
