@@ -313,6 +313,11 @@ def init_db():
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE
     )''')
+    
+    # Очищаем старые данные
+    c.execute('DELETE FROM object_names')
+    c.execute('DELETE FROM expense_types')
+    
     # Заполняем дефолтные значения, если таблицы пусты
     c.execute('SELECT COUNT(*) FROM pay_types')
     if c.fetchone()[0] == 0:
@@ -322,14 +327,15 @@ def init_db():
     if c.fetchone()[0] == 0:
         for name in ["🟥 Doimiy Xarajat", "🟩 Oʻzgaruvchan Xarajat", "🟪 Qarz", "⚪ Avtoprom", "🟩 Divident", "🟪 Soliq", "🟦 Ish Xaqi"]:
             c.execute('INSERT INTO categories (name) VALUES (%s)', (name,))
-    c.execute('SELECT COUNT(*) FROM object_names')
-    if c.fetchone()[0] == 0:
-        for name in object_names:
-            c.execute('INSERT INTO object_names (name) VALUES (%s)', (name,))
-    c.execute('SELECT COUNT(*) FROM expense_types')
-    if c.fetchone()[0] == 0:
-        for name in expense_types:
-            c.execute('INSERT INTO expense_types (name) VALUES (%s)', (name,))
+    
+    # Заполняем объекты номи
+    for name in object_names:
+        c.execute('INSERT INTO object_names (name) VALUES (%s)', (name,))
+    
+    # Заполняем типы расходов
+    for name in expense_types:
+        c.execute('INSERT INTO expense_types (name) VALUES (%s)', (name,))
+    
     conn.commit()
     conn.close()
 
