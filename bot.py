@@ -196,7 +196,7 @@ confirm_kb.add(
 
 # --- Google Sheets settings ---
 SHEET_ID = '1D-9i4Y2R_txHL90LI0Kohx7H1HjvZ8vNJlLi7r4n6Oo'
-SHEET_NAME = 'Kirim/chiqim'
+SHEET_NAME = 'КиримЧичим'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 CREDENTIALS_FILE = 'credentials.json'
 
@@ -239,12 +239,11 @@ def add_to_google_sheet(data):
         data.get('type', ''),             # Кирим/Чиким
         data.get('expense_type', ''),     # Харажат Тури
         data.get('comment', ''),          # Изох
+        dollar_amount,                     # $
         exchange_rate,                     # Курс
         som_amount,                        # Сом
-        dollar_amount,                     # $
         date_str,                         # Сана
-        user_name,                        # Масул шахс
-        date_str                          # Ой хисоб (используем ту же дату)
+        user_name                         # Масул шахс
     ]
     worksheet.append_row(row)
 
