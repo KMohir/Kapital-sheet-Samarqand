@@ -279,7 +279,7 @@ def format_summary(data):
         f"<b>Харажат тури:</b> {data.get('expense_type', '-')}\n"
         f"<b>Валюта:</b> {currency_type}\n"
         f"<b>Сумма:</b> {amount_info}\n"
-        f"<b>Договор раками:</b> {data.get('comment', '-')}\n"
+        f"<b>Изох:</b> {data.get('comment', '-')}\n"
         f"<b>Vaqt:</b> {dt}"
     )
 
