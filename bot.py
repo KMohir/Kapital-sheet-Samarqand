@@ -220,7 +220,7 @@ def add_to_google_sheet(data):
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SHEET_ID)
     worksheet = sh.worksheet(SHEET_NAME)
-    # Новая структура: Объект номи, Кирим/Чиким, Харажат Тури, Изох, Курс, Сом, Сана, Масул шахс, Ой хисоб
+    
     from datetime import datetime
     now = datetime.now()
     if platform.system() == 'Windows':
@@ -245,18 +245,20 @@ def add_to_google_sheet(data):
         dollar_amount = ''
         exchange_rate = ''
     
-    row = [
-        data.get('object_name', ''),      # Объект номи
-        data.get('type', ''),             # Кирим/Чиким
-        data.get('expense_type', ''),     # Харажат Тури
-        data.get('comment', ''),          # Изох
-        dollar_amount,                     # $
-        exchange_rate,                     # Курс
-        som_amount,                        # Сом
-        date_str,                         # Сана
-        user_name                         # Масул шахс
-    ]
-    worksheet.append_row(row)
+    # Находим первую пустую строку
+    all_values = worksheet.get_all_values()
+    next_row = len(all_values) + 1
+    
+    # Записываем данные в правильные столбцы (A-I)
+    worksheet.update(f'A{next_row}', data.get('object_name', ''))      # Объект номи
+    worksheet.update(f'B{next_row}', data.get('type', ''))             # Кирим/Чиким
+    worksheet.update(f'C{next_row}', data.get('expense_type', ''))     # Харажат Тури
+    worksheet.update(f'D{next_row}', data.get('comment', ''))          # Изох
+    worksheet.update(f'E{next_row}', dollar_amount)                     # $
+    worksheet.update(f'F{next_row}', exchange_rate)                     # Курс
+    worksheet.update(f'G{next_row}', som_amount)                        # Сом
+    worksheet.update(f'H{next_row}', date_str)                         # Сана
+    worksheet.update(f'I{next_row}', user_name)                        # Масул шахс
 
 def format_summary(data):
     tur_emoji = '🟢' if data.get('type') == 'Kirim' else '🔴'
