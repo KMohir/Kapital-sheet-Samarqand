@@ -269,7 +269,7 @@ def format_summary(data):
         f"<b>Харажат тури:</b> {data.get('expense_type', '-')}\n"
         f"<b>Валюта:</b> {currency_type}\n"
         f"<b>Сумма:</b> {amount_info}\n"
-        f"<b>Изох:</b> {data.get('comment', '-')}\n"
+        f"<b>Договор раками:</b> {data.get('comment', '-')}\n"
         f"<b>Vaqt:</b> {dt}"
     )
 
@@ -547,14 +547,14 @@ async def process_amount(msg: types.Message, state: FSMContext):
         await Form.exchange_rate.set()
     else:
         # Если Сом, сразу переходим к комментарию
-        await msg.answer("<b>Izoh kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
+        await msg.answer("<b>Договор раками kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
         await Form.comment.set()
 
 # Курс доллара
 @dp.message_handler(lambda m: m.text.replace('.', '', 1).isdigit(), state=Form.exchange_rate)
 async def process_exchange_rate(msg: types.Message, state: FSMContext):
     await state.update_data(exchange_rate=msg.text)
-    await msg.answer("<b>Izoh kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
+    await msg.answer("<b>Договор раками kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
     await Form.comment.set()
 
 # Кнопка пропуска комментария
