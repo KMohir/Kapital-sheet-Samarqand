@@ -191,23 +191,29 @@ def add_to_google_sheet(data):
     time_str = now.strftime('%H:%M')
     user_name = get_user_name(data.get('user_id', data.get('user_id', '')))
     
-    # Определяем сумму в сомах
-    amount_som = data.get('amount', '')
-    if data.get('currency_type') == 'Доллар' and data.get('exchange_rate'):
-        try:
-            amount_usd = float(data.get('amount', 0))
-            exchange_rate = float(data.get('exchange_rate', 0))
-            amount_som = str(amount_usd * exchange_rate)
-        except:
-            amount_som = data.get('amount', '')
+    # Определяем данные для столбцов в зависимости от валюты
+    currency_type = data.get('currency_type', '')
+    amount = data.get('amount', '')
+    exchange_rate = data.get('exchange_rate', '')
+    
+    if currency_type == 'Доллар':
+        # Если доллар: Курс = курс, $ = сумма в долларах, Сом = пусто
+        som_amount = ''
+        dollar_amount = amount
+    else:
+        # Если сом: Курс = пусто, $ = пусто, Сом = сумма в сомах
+        som_amount = amount
+        dollar_amount = ''
+        exchange_rate = ''
     
     row = [
         data.get('object_name', ''),      # Объект номи
         data.get('type', ''),             # Кирим/Чиким
         data.get('expense_type', ''),     # Харажат Тури
         data.get('comment', ''),          # Изох
-        data.get('exchange_rate', ''),    # Курс
-        amount_som,                       # Сом
+        exchange_rate,                     # Курс
+        som_amount,                        # Сом
+        dollar_amount,                     # $
         date_str,                         # Сана
         user_name,                        # Масул шахс
         date_str                          # Ой хисоб (используем ту же дату)
@@ -219,18 +225,21 @@ def format_summary(data):
     dt = data.get('dt', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     
     # Формируем информацию о сумме и валюте
-    amount_info = f"{data.get('amount', '-')}"
-    if data.get('currency_type') == 'Доллар' and data.get('exchange_rate'):
-        amount_info += f" $ (курс: {data.get('exchange_rate', '-')})"
+    currency_type = data.get('currency_type', '')
+    amount = data.get('amount', '-')
+    
+    if currency_type == 'Доллар':
+        exchange_rate = data.get('exchange_rate', '-')
+        amount_info = f"{amount} $ (курс: {exchange_rate})"
     else:
-        amount_info += " Сом"
+        amount_info = f"{amount} Сом"
     
     return (
         f"<b>Natija:</b>\n"
         f"<b>Tur:</b> {tur_emoji} {data.get('type', '-')}\n"
         f"<b>Объект номи:</b> {data.get('object_name', '-')}\n"
         f"<b>Харажат тури:</b> {data.get('expense_type', '-')}\n"
-        f"<b>Валюта:</b> {data.get('currency_type', '-')}\n"
+        f"<b>Валюта:</b> {currency_type}\n"
         f"<b>Сумма:</b> {amount_info}\n"
         f"<b>Изох:</b> {data.get('comment', '-')}\n"
         f"<b>Vaqt:</b> {dt}"
