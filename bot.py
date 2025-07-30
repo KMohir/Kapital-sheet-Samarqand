@@ -247,7 +247,19 @@ def add_to_google_sheet(data):
     
     # Находим первую пустую строку
     all_values = worksheet.get_all_values()
-    next_row = len(all_values) + 1
+    
+    # Ищем первую пустую строку после заголовков
+    next_row = 2  # Начинаем со строки 2 (после заголовков)
+    for i, row in enumerate(all_values[1:], 2):  # Пропускаем заголовки
+        if not any(cell.strip() for cell in row[:9]):  # Проверяем первые 9 столбцов
+            next_row = i
+            break
+    else:
+        # Если не нашли пустую строку, добавляем новую
+        next_row = len(all_values) + 1
+        # Расширяем лист если нужно
+        if next_row > 45:
+            worksheet.resize(next_row + 10, 25)  # Добавляем 10 строк
     
     # Записываем данные в правильные столбцы (A-I)
     worksheet.update(f'A{next_row}', data.get('object_name', ''))      # Объект номи
