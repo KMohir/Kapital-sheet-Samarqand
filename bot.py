@@ -196,7 +196,7 @@ confirm_kb.add(
 
 # --- Google Sheets settings ---
 SHEET_ID = '1D-9i4Y2R_txHL90LI0Kohx7H1HjvZ8vNJlLi7r4n6Oo'
-SHEET_NAME = 'КиримЧичим'
+SHEET_NAME = 'КиримЧиким'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 CREDENTIALS_FILE = 'credentials.json'
 
