@@ -693,25 +693,36 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
         # Гарантируем, что user_id всегда есть
         data['user_id'] = call.from_user.id
         
-        # Проверяем сумму для одобрения админом
+        # Проверяем сумму для одобрения админом (только для Chiqim)
+        operation_type = data.get('type', '')
         currency_type = data.get('currency_type', '')
         amount = data.get('amount', '0')
+        exchange_rate = data.get('exchange_rate', '0')
         
         try:
             amount_value = float(amount)
-            needs_approval = (currency_type == 'Сом' and amount_value >= 10000000)
+            exchange_rate_value = float(exchange_rate) if exchange_rate != '0' else 1
+            
+            # Рассчитываем общую сумму в сомах
+            if currency_type == 'Доллар':
+                total_som_amount = amount_value * exchange_rate_value
+            else:
+                total_som_amount = amount_value
+            
+            # Проверяем, нужна ли одобрение (только для Chiqim и если сумма >= 10,000,000 сом)
+            needs_approval = (operation_type == 'Ciqim' and total_som_amount >= 10000000)
             
             if needs_approval:
                 # Отправляем на одобрение админу
                 user_name = get_user_name(call.from_user.id) or call.from_user.full_name
                 summary_text = format_summary(data)
-                admin_approval_text = f"⚠️ <b>Требуется одобрение!</b>\n\nFoydalanuvchi <b>{user_name}</b> tomonidan kiritilgan katta summa:\n\n{summary_text}"
+                admin_approval_text = f"⚠️ <b>Tasdiqlash talab qilinadi!</b>\n\nFoydalanuvchi <b>{user_name}</b> tomonidan kiritilgan katta summa:\n\n{summary_text}"
                 
                 # Создаем кнопки для админа
                 admin_kb = InlineKeyboardMarkup(row_width=2)
                 admin_kb.add(
-                    InlineKeyboardButton('✅ Одобрить', callback_data=f'approve_large_{call.from_user.id}_{int(dt.timestamp())}'),
-                    InlineKeyboardButton('❌ Отклонить', callback_data=f'reject_large_{call.from_user.id}_{int(dt.timestamp())}')
+                    InlineKeyboardButton('✅ Tasdiqlash', callback_data=f'approve_large_{call.from_user.id}_{int(dt.timestamp())}'),
+                    InlineKeyboardButton('❌ Rad etish', callback_data=f'reject_large_{call.from_user.id}_{int(dt.timestamp())}')
                 )
                 
                 # Сохраняем данные для последующего использования
@@ -734,13 +745,13 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                         logging.error(f"Could not send approval request to admin {admin_id}: {e}")
                 
                 if sent_to_admin:
-                    await call.message.answer('⏳ Ваша заявка отправлена на одобрение администратору. Ожидайте подтверждения.')
+                    await call.message.answer('⏳ Arizangiz administratorga yuborildi. Tasdiqlashni kuting.')
                 else:
-                    await call.message.answer('⚠️ Ошибка: не удалось отправить на одобрение. Попробуйте позже.')
+                    await call.message.answer('⚠️ Xatolik: tasdiqlashga yuborish amalga oshmadi. Keyinroq urinib ko\'ring.')
             else:
                 # Обычная отправка в Google Sheet
                 add_to_google_sheet(data)
-                await call.message.answer('✅ Данные успешно отправлены в Google Sheets!')
+                await call.message.answer('✅ Ma\'lumotlar Google Sheets-ga muvaffaqiyatli yuborildi!')
 
                 # Уведомление для админов
                 user_name = get_user_name(call.from_user.id) or call.from_user.full_name
@@ -754,10 +765,10 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                         logging.error(f"Could not send notification to admin {admin_id}: {e}")
 
         except Exception as e:
-            await call.message.answer(f'⚠️ Ошибка при отправке в Google Sheets: {e}')
+            await call.message.answer(f'⚠️ Google Sheets-ga yuborishda xatolik: {e}')
         await state.finish()
     else:
-        await call.message.answer('❌ Операция отменена.')
+        await call.message.answer('❌ Operatsiya bekor qilindi.')
         await state.finish()
     # Возврат к стартовому шагу
     text = "<b>Qaysi turdagi operatsiya?</b>"
@@ -805,19 +816,19 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             logging.info("Данные отправлены в Google Sheet")
             
             # Отправляем сообщение пользователю
-            await bot.send_message(user_id, '✅ Ваша заявка одобрена! Данные записаны в Google Sheet.')
+            await bot.send_message(user_id, '✅ Arizangiz tasdiqlandi! Ma\'lumotlar Google Sheet-ga yozildi.')
             
             # Удаляем из хранилища
             del pending_approvals[approval_key]
             
-            await call.message.edit_text('✅ Заявка одобрена и записана в Google Sheet.')
+            await call.message.edit_text('✅ Ariza tasdiqlandi va Google Sheet-ga yozildi.')
         else:
             logging.error(f"Данные не найдены для ключа: {approval_key}")
-            await call.message.edit_text('❌ Данные заявки не найдены.')
+            await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi.')
         
     except Exception as e:
         logging.error(f"Ошибка при одобрении: {e}")
-        await call.message.edit_text(f'❌ Ошибка при одобрении: {e}')
+        await call.message.edit_text(f'❌ Tasdiqlashda xatolik: {e}')
     
     await call.answer()
 
@@ -846,18 +857,18 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     
     try:
         # Отправляем сообщение пользователю
-        await bot.send_message(user_id, '❌ Ваша заявка отклонена администратором.')
+        await bot.send_message(user_id, '❌ Arizangiz administrator tomonidan rad etildi.')
         
         # Удаляем из хранилища
         if approval_key in pending_approvals:
             del pending_approvals[approval_key]
             logging.info(f"Заявка удалена из хранилища: {approval_key}")
         
-        await call.message.edit_text('❌ Заявка отклонена.')
+        await call.message.edit_text('❌ Ariza rad etildi.')
         
     except Exception as e:
         logging.error(f"Ошибка при отклонении: {e}")
-        await call.message.edit_text(f'❌ Ошибка при отклонении: {e}')
+        await call.message.edit_text(f'❌ Rad etishda xatolik: {e}')
     
     await call.answer()
 
