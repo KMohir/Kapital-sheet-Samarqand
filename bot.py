@@ -694,6 +694,10 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 data['pending_approval'] = True
                 data['approval_timestamp'] = int(dt.timestamp())
                 
+                logging.info(f"Данные сохранены для одобрения. Ключ: {approval_key}")
+                logging.info(f"Сохраненные данные: {data}")
+                logging.info(f"Все pending approvals: {list(pending_approvals.keys())}")
+                
                 # Отправляем всем админам
                 sent_to_admin = False
                 for admin_id in ADMINS:
@@ -743,6 +747,8 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
 # Обработка одобрения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'))
 async def approve_large_amount(call: types.CallbackQuery):
+    logging.info(f"Одобрение больших сумм вызвано: {call.data}")
+    
     if call.from_user.id not in ADMINS:
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
@@ -753,13 +759,18 @@ async def approve_large_amount(call: types.CallbackQuery):
     timestamp = int(parts[3])
     approval_key = f"{user_id}_{timestamp}"
     
+    logging.info(f"Approval key: {approval_key}")
+    logging.info(f"Pending approvals: {list(pending_approvals.keys())}")
+    
     try:
         # Получаем сохраненные данные
         if approval_key in pending_approvals:
             saved_data = pending_approvals[approval_key]
+            logging.info(f"Найдены данные для одобрения: {saved_data}")
             
             # Отправляем в Google Sheet
             add_to_google_sheet(saved_data)
+            logging.info("Данные отправлены в Google Sheet")
             
             # Отправляем сообщение пользователю
             await bot.send_message(user_id, '✅ Ваша заявка одобрена! Данные записаны в Google Sheet.')
@@ -769,9 +780,11 @@ async def approve_large_amount(call: types.CallbackQuery):
             
             await call.message.edit_text('✅ Заявка одобрена и записана в Google Sheet.')
         else:
+            logging.error(f"Данные не найдены для ключа: {approval_key}")
             await call.message.edit_text('❌ Данные заявки не найдены.')
         
     except Exception as e:
+        logging.error(f"Ошибка при одобрении: {e}")
         await call.message.edit_text(f'❌ Ошибка при одобрении: {e}')
     
     await call.answer()
@@ -779,6 +792,8 @@ async def approve_large_amount(call: types.CallbackQuery):
 # Обработка отклонения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'))
 async def reject_large_amount(call: types.CallbackQuery):
+    logging.info(f"Отклонение больших сумм вызвано: {call.data}")
+    
     if call.from_user.id not in ADMINS:
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
@@ -789,6 +804,8 @@ async def reject_large_amount(call: types.CallbackQuery):
     timestamp = int(parts[3])
     approval_key = f"{user_id}_{timestamp}"
     
+    logging.info(f"Rejection key: {approval_key}")
+    
     try:
         # Отправляем сообщение пользователю
         await bot.send_message(user_id, '❌ Ваша заявка отклонена администратором.')
@@ -796,10 +813,12 @@ async def reject_large_amount(call: types.CallbackQuery):
         # Удаляем из хранилища
         if approval_key in pending_approvals:
             del pending_approvals[approval_key]
+            logging.info(f"Заявка удалена из хранилища: {approval_key}")
         
         await call.message.edit_text('❌ Заявка отклонена.')
         
     except Exception as e:
+        logging.error(f"Ошибка при отклонении: {e}")
         await call.message.edit_text(f'❌ Ошибка при отклонении: {e}')
     
     await call.answer()
@@ -1090,6 +1109,35 @@ async def check_sheets_cmd(msg: types.Message, state: FSMContext):
         await msg.answer(response)
     else:
         await msg.answer("❌ Не удалось получить список листов")
+
+@dp.message_handler(commands=['update_lists'], state='*')
+async def update_lists_cmd(msg: types.Message, state: FSMContext):
+    if msg.from_user.id not in ADMINS:
+        await msg.answer('Faqat admin uchun!')
+        return
+    
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        # Очищаем старые данные
+        c.execute('DELETE FROM object_names')
+        c.execute('DELETE FROM expense_types')
+        
+        # Добавляем новые объекты
+        for obj in object_names:
+            c.execute('INSERT INTO object_names (name) VALUES (%s)', (obj,))
+        
+        # Добавляем новые типы расходов
+        for exp in expense_types:
+            c.execute('INSERT INTO expense_types (name) VALUES (%s)', (exp,))
+        
+        conn.commit()
+        conn.close()
+        
+        await msg.answer('✅ Списки объектов и типов расходов обновлены!')
+    except Exception as e:
+        await msg.answer(f'❌ Ошибка при обновлении списков: {e}')
 
 @dp.message_handler(commands=['userslist'], state='*')
 async def users_list_cmd(msg: types.Message, state: FSMContext):
