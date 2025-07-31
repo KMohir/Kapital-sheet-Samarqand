@@ -32,6 +32,7 @@ class Form(StatesGroup):
     object_name = State()  # Объект номи
     expense_type = State()  # Харажат тури
     currency_type = State()  # Сом или Доллар
+    payment_type = State()  # Тулов тури
     amount = State()  # Сумма
     exchange_rate = State()  # Курс доллара (если выбрана валюта)
     comment = State()  # Изох
@@ -46,72 +47,69 @@ start_kb.add(
 # Объекты номи
 object_names = [
     "Сам Сити",
-    "Рубловка",
+    "Ситй+Сиёб Б Й К блок",
     "Ал Бухорий",
-    "Сити+Сиёб Б Й К блок",
+    "Ал-Бухорий Хотел",
+    "Рубловка",
+    "Қува ҚВП",
     "Макон Малл",
     "Карши Малл",
-    "Карши Хотен",
+    "Карши Хотел",
     "Воха Гавхари",
-    "Зарметан усто Габур",
-    "Коха завод",
+    "Зарметан усто Ғафур",
+    "Кожа завод",
     "Мотрид катеж",
     "Хишрав",
     "Махдуми Азам",
     "Сирдарё 1/10 Зухри",
     "Эшонгузар",
-    "Бодомзор Юнусобад",
-    "Янги Тошкент",
-    "Қўрғон",
-    "Пилла Пункт катеж",
-    "Рубловка (Хожи бобо дом)",
-    "Вин завод",
-    "СХФ-2",
-    "В.Комад",
-    "Ургут Малл",
-    "Пажарни склад дом",
-    "Қўқон Малл",
-    "Қува ҚВП"
+    "Рубловка(Хожи бобо дом)",
+    "Ургут",
+    "Қўқон малл"
 ]
 
 # Типы расходов
 expense_types = [
-    "Mijozlar",
+    "Мижозлардан",
     "Дорожные расходы",
-    "Олиб чикиб кетилган мусор",
+    "Питания",
     "Курилиш материаллар",
     "Хоз товары и инвентарь",
     "Ремонт техники и запчасти",
     "Коммунал и интернет",
     "Прочие расходы",
     "Хизмат (Прочие расходы)",
+    "Йоқилғи",
+    "Ойлик",
+    "Обём",
+    "Олиб чикиб кетилган мусор",
+    "Аренда техника",
     "Перечесления Расход",
-    "Перечесления Период",
+    "Перечесления Приход",
     "Эхсон",
     "Карз олинди",
     "Карз кайтарилди",
     "Перевод",
     "Доллар олинди",
-    "Доллар сотилди",
-    "Переброска",
-    "Материал",
-    "Йокилги",
-    "Аренда техника",
-    "Обём",
-    "Ойлик",
+    "Доллар Сотилди",
     "Премия",
-    "Эхсон учун",
     "Расход техника",
-    "Хозтавар",
+    "хозтавар",
     "Кунлик ишчи",
-    "Конставар",
-    "Бошқа расход"
+    "Конставар"
 ]
 
 # Типы валют
 currency_types = [
     ("Сом", "currency_som"),
     ("Доллар", "currency_dollar")
+]
+
+# Типы оплаты
+payment_types = [
+    ("Нахт", "payment_nah"),
+    ("Пластик", "payment_plastik"),
+    ("Банк", "payment_bank")
 ]
 
 # Категории (старые - оставляем для совместимости)
@@ -157,6 +155,12 @@ def get_expense_types_kb():
 def get_currency_types_kb():
     kb = InlineKeyboardMarkup(row_width=2)
     for name, cb in currency_types:
+        kb.add(InlineKeyboardButton(name, callback_data=cb))
+    return kb
+
+def get_payment_types_kb():
+    kb = InlineKeyboardMarkup(row_width=1)
+    for name, cb in payment_types:
         kb.add(InlineKeyboardButton(name, callback_data=cb))
     return kb
 
@@ -238,10 +242,11 @@ def add_to_google_sheet(data):
     if currency_type == 'Доллар':
         # Если доллар: Курс = курс, $ = сумма в долларах, Сом = пусто
         som_amount = ''
-        dollar_amount = amount
+        dollar_amount = int(float(amount)) if amount else ''
+        exchange_rate = int(float(exchange_rate)) if exchange_rate else ''
     else:
         # Если сом: Курс = пусто, $ = пусто, Сом = сумма в сомах
-        som_amount = amount
+        som_amount = int(float(amount)) if amount else ''
         dollar_amount = ''
         exchange_rate = ''
     
@@ -261,7 +266,7 @@ def add_to_google_sheet(data):
         if next_row > 45:
             worksheet.resize(next_row + 10, 25)  # Добавляем 10 строк
     
-    # Записываем данные в правильные столбцы (A-I)
+    # Записываем данные в правильные столбцы (A-J)
     worksheet.update(f'A{next_row}', data.get('object_name', ''))      # Объект номи
     worksheet.update(f'B{next_row}', data.get('type', ''))             # Кирим/Чиким
     worksheet.update(f'C{next_row}', data.get('expense_type', ''))     # Харажат Тури
@@ -271,6 +276,7 @@ def add_to_google_sheet(data):
     worksheet.update(f'G{next_row}', som_amount)                        # Сом
     worksheet.update(f'H{next_row}', date_str)                         # Сана
     worksheet.update(f'I{next_row}', user_name)                        # Масул шахс
+    worksheet.update(f'J{next_row}', data.get('payment_type', ''))     # Тулов тури
 
 def format_summary(data):
     tur_emoji = '🟢' if data.get('type') == 'Kirim' else '🔴'
@@ -292,6 +298,7 @@ def format_summary(data):
         f"<b>Объект номи:</b> {data.get('object_name', '-')}\n"
         f"<b>Харажат тури:</b> {data.get('expense_type', '-')}\n"
         f"<b>Валюта:</b> {currency_type}\n"
+        f"<b>Тулов тури:</b> {data.get('payment_type', '-')}\n"
         f"<b>Сумма:</b> {amount_info}\n"
         f"<b>Изох:</b> {data.get('comment', '-')}\n"
         f"<b>Vaqt:</b> {dt}"
@@ -299,6 +306,9 @@ def format_summary(data):
 
 # --- Админы ---
 ADMINS = [5657091547, 5048593195]  # Здесь можно добавить id других админов через запятую
+
+# Хранилище для данных, ожидающих одобрения
+pending_approvals = {}
 
 # --- Инициализация БД ---
 def get_db_conn():
@@ -565,6 +575,29 @@ async def process_currency_type(call: types.CallbackQuery, state: FSMContext):
     await Form.amount.set()
     await call.answer()
 
+# Выбор типа оплаты
+@dp.callback_query_handler(lambda c: c.data.startswith('payment_'), state=Form.payment_type)
+async def process_payment_type(call: types.CallbackQuery, state: FSMContext):
+    payment_map = {
+        'payment_nah': 'Нахт',
+        'payment_plastik': 'Пластик',
+        'payment_bank': 'Банк'
+    }
+    payment = payment_map.get(call.data, 'Нахт')
+    await state.update_data(payment_type=payment)
+    
+    # Проверяем, выбран ли "Мижозлардан"
+    data = await state.get_data()
+    expense_type = data.get('expense_type', '')
+    
+    if expense_type == 'Мижозлардан':
+        await call.message.edit_text("<b>Договор раками kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
+    else:
+        await call.message.edit_text("<b>Изох kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
+    
+    await Form.comment.set()
+    await call.answer()
+
 # Сумма
 @dp.message_handler(lambda m: m.text.replace('.', '', 1).isdigit(), state=Form.amount)
 async def process_amount(msg: types.Message, state: FSMContext):
@@ -576,16 +609,16 @@ async def process_amount(msg: types.Message, state: FSMContext):
         await msg.answer("<b>Курс долларани kiriting:</b>")
         await Form.exchange_rate.set()
     else:
-        # Если Сом, сразу переходим к комментарию
-        await msg.answer("<b>Договор раками kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
-        await Form.comment.set()
+        # Если Сом, переходим к типу оплаты
+        await msg.answer("<b>Тулов турини tanlang:</b>", reply_markup=get_payment_types_kb())
+        await Form.payment_type.set()
 
 # Курс доллара
 @dp.message_handler(lambda m: m.text.replace('.', '', 1).isdigit(), state=Form.exchange_rate)
 async def process_exchange_rate(msg: types.Message, state: FSMContext):
     await state.update_data(exchange_rate=msg.text)
-    await msg.answer("<b>Договор раками kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
-    await Form.comment.set()
+    await msg.answer("<b>Тулов турини tanlang:</b>", reply_markup=get_payment_types_kb())
+    await Form.payment_type.set()
 
 # Кнопка пропуска комментария
 @dp.callback_query_handler(lambda c: c.data == 'skip_comment', state=Form.comment)
@@ -633,20 +666,62 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
         data['vaqt'] = time_str
         # Гарантируем, что user_id всегда есть
         data['user_id'] = call.from_user.id
+        
+        # Проверяем сумму для одобрения админом
+        currency_type = data.get('currency_type', '')
+        amount = data.get('amount', '0')
+        
         try:
-            add_to_google_sheet(data)
-            await call.message.answer('✅ Данные успешно отправлены в Google Sheets!')
-
-            # Уведомление для админов
-            user_name = get_user_name(call.from_user.id) or call.from_user.full_name
-            summary_text = format_summary(data)
-            admin_notification_text = f"Foydalanuvchi <b>{user_name}</b> tomonidan kiritilgan yangi ma'lumot:\n\n{summary_text}"
+            amount_value = float(amount)
+            needs_approval = (currency_type == 'Сом' and amount_value >= 10000000)
             
-            for admin_id in ADMINS:
-                try:
-                    await bot.send_message(admin_id, admin_notification_text)
-                except Exception as e:
-                    logging.error(f"Could not send notification to admin {admin_id}: {e}")
+            if needs_approval:
+                # Отправляем на одобрение админу
+                user_name = get_user_name(call.from_user.id) or call.from_user.full_name
+                summary_text = format_summary(data)
+                admin_approval_text = f"⚠️ <b>Требуется одобрение!</b>\n\nFoydalanuvchi <b>{user_name}</b> tomonidan kiritilgan katta summa:\n\n{summary_text}"
+                
+                # Создаем кнопки для админа
+                admin_kb = InlineKeyboardMarkup(row_width=2)
+                admin_kb.add(
+                    InlineKeyboardButton('✅ Одобрить', callback_data=f'approve_large_{call.from_user.id}_{int(dt.timestamp())}'),
+                    InlineKeyboardButton('❌ Отклонить', callback_data=f'reject_large_{call.from_user.id}_{int(dt.timestamp())}')
+                )
+                
+                # Сохраняем данные для последующего использования
+                approval_key = f"{call.from_user.id}_{int(dt.timestamp())}"
+                pending_approvals[approval_key] = data
+                data['pending_approval'] = True
+                data['approval_timestamp'] = int(dt.timestamp())
+                
+                # Отправляем всем админам
+                sent_to_admin = False
+                for admin_id in ADMINS:
+                    try:
+                        await bot.send_message(admin_id, admin_approval_text, reply_markup=admin_kb)
+                        sent_to_admin = True
+                    except Exception as e:
+                        logging.error(f"Could not send approval request to admin {admin_id}: {e}")
+                
+                if sent_to_admin:
+                    await call.message.answer('⏳ Ваша заявка отправлена на одобрение администратору. Ожидайте подтверждения.')
+                else:
+                    await call.message.answer('⚠️ Ошибка: не удалось отправить на одобрение. Попробуйте позже.')
+            else:
+                # Обычная отправка в Google Sheet
+                add_to_google_sheet(data)
+                await call.message.answer('✅ Данные успешно отправлены в Google Sheets!')
+
+                # Уведомление для админов
+                user_name = get_user_name(call.from_user.id) or call.from_user.full_name
+                summary_text = format_summary(data)
+                admin_notification_text = f"Foydalanuvchi <b>{user_name}</b> tomonidan kiritilgan yangi ma'lumot:\n\n{summary_text}"
+                
+                for admin_id in ADMINS:
+                    try:
+                        await bot.send_message(admin_id, admin_notification_text)
+                    except Exception as e:
+                        logging.error(f"Could not send notification to admin {admin_id}: {e}")
 
         except Exception as e:
             await call.message.answer(f'⚠️ Ошибка при отправке в Google Sheets: {e}')
@@ -663,6 +738,70 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     )
     await call.message.answer(text, reply_markup=kb)
     await Form.type.set()
+    await call.answer()
+
+# Обработка одобрения больших сумм
+@dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'))
+async def approve_large_amount(call: types.CallbackQuery):
+    if call.from_user.id not in ADMINS:
+        await call.answer('Faqat admin uchun!', show_alert=True)
+        return
+    
+    # Парсим данные из callback
+    parts = call.data.split('_')
+    user_id = int(parts[2])
+    timestamp = int(parts[3])
+    approval_key = f"{user_id}_{timestamp}"
+    
+    try:
+        # Получаем сохраненные данные
+        if approval_key in pending_approvals:
+            saved_data = pending_approvals[approval_key]
+            
+            # Отправляем в Google Sheet
+            add_to_google_sheet(saved_data)
+            
+            # Отправляем сообщение пользователю
+            await bot.send_message(user_id, '✅ Ваша заявка одобрена! Данные записаны в Google Sheet.')
+            
+            # Удаляем из хранилища
+            del pending_approvals[approval_key]
+            
+            await call.message.edit_text('✅ Заявка одобрена и записана в Google Sheet.')
+        else:
+            await call.message.edit_text('❌ Данные заявки не найдены.')
+        
+    except Exception as e:
+        await call.message.edit_text(f'❌ Ошибка при одобрении: {e}')
+    
+    await call.answer()
+
+# Обработка отклонения больших сумм
+@dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'))
+async def reject_large_amount(call: types.CallbackQuery):
+    if call.from_user.id not in ADMINS:
+        await call.answer('Faqat admin uchun!', show_alert=True)
+        return
+    
+    # Парсим данные из callback
+    parts = call.data.split('_')
+    user_id = int(parts[2])
+    timestamp = int(parts[3])
+    approval_key = f"{user_id}_{timestamp}"
+    
+    try:
+        # Отправляем сообщение пользователю
+        await bot.send_message(user_id, '❌ Ваша заявка отклонена администратором.')
+        
+        # Удаляем из хранилища
+        if approval_key in pending_approvals:
+            del pending_approvals[approval_key]
+        
+        await call.message.edit_text('❌ Заявка отклонена.')
+        
+    except Exception as e:
+        await call.message.edit_text(f'❌ Ошибка при отклонении: {e}')
+    
     await call.answer()
 
 # --- Команды для админа ---
