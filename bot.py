@@ -745,8 +745,8 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
 
 # Обработка одобрения больших сумм
-@dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'))
-async def approve_large_amount(call: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'), state='*')
+async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
     logging.info(f"Одобрение больших сумм вызвано: {call.data}")
     
     if call.from_user.id not in ADMINS:
@@ -761,6 +761,12 @@ async def approve_large_amount(call: types.CallbackQuery):
     
     logging.info(f"Approval key: {approval_key}")
     logging.info(f"Pending approvals: {list(pending_approvals.keys())}")
+    
+    # Сбрасываем состояние FSM для пользователя, который отправил заявку
+    try:
+        await state.finish()
+    except:
+        pass
     
     try:
         # Получаем сохраненные данные
@@ -790,8 +796,8 @@ async def approve_large_amount(call: types.CallbackQuery):
     await call.answer()
 
 # Обработка отклонения больших сумм
-@dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'))
-async def reject_large_amount(call: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'), state='*')
+async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     logging.info(f"Отклонение больших сумм вызвано: {call.data}")
     
     if call.from_user.id not in ADMINS:
@@ -805,6 +811,12 @@ async def reject_large_amount(call: types.CallbackQuery):
     approval_key = f"{user_id}_{timestamp}"
     
     logging.info(f"Rejection key: {approval_key}")
+    
+    # Сбрасываем состояние FSM для пользователя, который отправил заявку
+    try:
+        await state.finish()
+    except:
+        pass
     
     try:
         # Отправляем сообщение пользователю
