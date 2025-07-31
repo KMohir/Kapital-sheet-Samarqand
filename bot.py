@@ -432,19 +432,45 @@ def get_categories():
     return result
 
 def get_object_names():
+    # Используем порядок из списка object_names
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute('SELECT name FROM object_names ORDER BY name')
-    result = [row[0] for row in c.fetchall()]
+    c.execute('SELECT name FROM object_names')
+    db_names = [row[0] for row in c.fetchall()]
     conn.close()
+    
+    # Сортируем по порядку в списке object_names
+    result = []
+    for name in object_names:
+        if name in db_names:
+            result.append(name)
+    
+    # Добавляем те, которых нет в списке (если есть)
+    for name in db_names:
+        if name not in result:
+            result.append(name)
+    
     return result
 
 def get_expense_types():
+    # Используем порядок из списка expense_types
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute('SELECT name FROM expense_types ORDER BY name')
-    result = [row[0] for row in c.fetchall()]
+    c.execute('SELECT name FROM expense_types')
+    db_names = [row[0] for row in c.fetchall()]
     conn.close()
+    
+    # Сортируем по порядку в списке expense_types
+    result = []
+    for name in expense_types:
+        if name in db_names:
+            result.append(name)
+    
+    # Добавляем те, которых нет в списке (если есть)
+    for name in db_names:
+        if name not in result:
+            result.append(name)
+    
     return result
 
 # --- Старт с регистрацией ---
@@ -503,7 +529,7 @@ async def process_register_phone(msg: types.Message, state: FSMContext):
     await state.finish()
 
 # --- Обработка одобрения/запрета админом ---
-@dp.callback_query_handler(lambda c: c.data.startswith('approve_') or c.data.startswith('deny_'), state='*')
+@dp.callback_query_handler(lambda c: (c.data.startswith('approve_') or c.data.startswith('deny_')) and not c.data.startswith('approve_large_') and not c.data.startswith('reject_large_'), state='*')
 async def process_admin_approve(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMINS:
         await call.answer('Faqat admin uchun!', show_alert=True)
