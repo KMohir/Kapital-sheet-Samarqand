@@ -220,6 +220,8 @@ def clean_emoji(text):
     return re.sub(r'^[^\w\s]+', '', text).strip()
 
 def add_to_google_sheet(data):
+    from datetime import datetime
+    
     # Проверяем на дублирование
     user_id = data.get('user_id', '')
     current_time = datetime.now().timestamp()
@@ -245,8 +247,6 @@ def add_to_google_sheet(data):
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SHEET_ID)
     worksheet = sh.worksheet(SHEET_NAME)
-    
-    from datetime import datetime
     now = datetime.now()
     if platform.system() == 'Windows':
         date_str = now.strftime('%m/%d/%Y')
