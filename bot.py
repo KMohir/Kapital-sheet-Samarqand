@@ -28,7 +28,7 @@ dp = Dispatcher(bot, storage=MemoryStorage())
 
 # Состояния
 class Form(StatesGroup):
-    type = State()  # Kirim/Ciqim
+    type = State()  # Кирим/Чиқим
     object_name = State()  # Объект номи
     expense_type = State()  # Харажат тури
     currency_type = State()  # Сом или Доллар
@@ -37,11 +37,11 @@ class Form(StatesGroup):
     exchange_rate = State()  # Курс доллара (если выбрана валюта)
     comment = State()  # Изох
 
-# Кнопки выбора Kirim/Chiqim
+# Кнопки выбора Кирим/Чиқим
 start_kb = InlineKeyboardMarkup(row_width=2)
 start_kb.add(
-    InlineKeyboardButton('🟢 Kirim', callback_data='type_kirim'),
-    InlineKeyboardButton('🔴 Chiqim', callback_data='type_chiqim')
+    InlineKeyboardButton('🟢 Кирим', callback_data='type_kirim'),
+    InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
 )
 
 # Объекты номи
@@ -276,10 +276,10 @@ def add_to_google_sheet(data):
     worksheet.update(f'G{next_row}', som_amount)                        # Сом
     worksheet.update(f'H{next_row}', date_str)                         # Сана
     worksheet.update(f'I{next_row}', user_name)                        # Масул шахс
-    worksheet.update(f'J{next_row}', data.get('payment_type', ''))     # Тулов тури
+    worksheet.update(f'K{next_row}', data.get('payment_type', ''))     # Тулов тури
 
 def format_summary(data):
-    tur_emoji = '🟢' if data.get('type') == 'Kirim' else '🔴'
+    tur_emoji = '🟢' if data.get('type') == 'Кирим' else '🔴'
     dt = data.get('dt', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     
     # Формируем информацию о сумме и валюте
@@ -559,16 +559,16 @@ async def start(msg: types.Message, state: FSMContext):
     text = "<b>Qaysi turdagi operatsiya?</b>"
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton('🟢 Kirim', callback_data='type_kirim'),
-        InlineKeyboardButton('🔴 Chiqim', callback_data='type_chiqim')
+        InlineKeyboardButton('🟢 Кирим', callback_data='type_kirim'),
+        InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
     )
     await msg.answer(text, reply_markup=kb)
     await Form.type.set()
 
-# Kirim/Ciqim выбор
+# Кирим/Чиқим выбор
 @dp.callback_query_handler(lambda c: c.data.startswith('type_'), state=Form.type)
 async def process_type(call: types.CallbackQuery, state: FSMContext):
-    t = 'Kirim' if call.data == 'type_kirim' else 'Ciqim'
+    t = 'Кирим' if call.data == 'type_kirim' else 'Чиқим'
     await state.update_data(type=t)
     await call.message.edit_text("<b>Объект номини tanlang:</b>", reply_markup=get_object_names_kb())
     await Form.object_name.set()
@@ -710,7 +710,7 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 total_som_amount = amount_value
             
             # Проверяем, нужна ли одобрение (только для Chiqim и если сумма >= 10,000,000 сом)
-            needs_approval = (operation_type == 'Ciqim' and total_som_amount >= 10000000)
+            needs_approval = (operation_type == 'Чиқим' and total_som_amount >= 10000000)
             
             if needs_approval:
                 # Отправляем на одобрение админу
@@ -774,8 +774,8 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     text = "<b>Qaysi turdagi operatsiya?</b>"
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton('🟢 Kirim', callback_data='type_kirim'),
-        InlineKeyboardButton('🔴 Chiqim', callback_data='type_chiqim')
+        InlineKeyboardButton('🟢 Кирим', callback_data='type_kirim'),
+        InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
     )
     await call.message.answer(text, reply_markup=kb)
     await Form.type.set()
