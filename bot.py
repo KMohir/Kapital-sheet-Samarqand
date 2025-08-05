@@ -220,6 +220,27 @@ def clean_emoji(text):
     return re.sub(r'^[^\w\s]+', '', text).strip()
 
 def add_to_google_sheet(data):
+    # Проверяем на дублирование
+    user_id = data.get('user_id', '')
+    current_time = datetime.now().timestamp()
+    
+    # Создаем уникальный ключ для записи
+    entry_key = f"{user_id}_{data.get('object_name', '')}_{data.get('type', '')}_{data.get('expense_type', '')}_{data.get('amount', '')}_{data.get('comment', '')}"
+    
+    # Проверяем, не была ли такая запись уже сделана в последние 30 секунд
+    if entry_key in recent_entries:
+        last_time = recent_entries[entry_key]
+        if current_time - last_time < 30:  # 30 секунд
+            logging.info(f"Дублирование предотвращено для пользователя {user_id}")
+            return False  # Возвращаем False если это дублирование
+    
+    # Сохраняем время текущей записи
+    recent_entries[entry_key] = current_time
+    
+    # Очищаем старые записи (старше 5 минут)
+    current_time = datetime.now().timestamp()
+    recent_entries = {k: v for k, v in recent_entries.items() if current_time - v < 300}
+    
     creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SHEET_ID)
@@ -277,6 +298,8 @@ def add_to_google_sheet(data):
     worksheet.update(f'H{next_row}', date_str)                         # Сана
     worksheet.update(f'I{next_row}', user_name)                        # Масул шахс
     worksheet.update(f'K{next_row}', data.get('payment_type', ''))     # Тулов тури
+    
+    return True  # Возвращаем True если запись успешна
 
 def format_summary(data):
     tur_emoji = '🟢' if data.get('type') == 'Кирим' else '🔴'
@@ -309,6 +332,9 @@ ADMINS = [5657091547, 5048593195]  # Здесь можно добавить id �
 
 # Хранилище для данных, ожидающих одобрения
 pending_approvals = {}
+
+# Хранилище для отслеживания последних записей (защита от дублирования)
+recent_entries = {}
 
 # --- Инициализация БД ---
 def get_db_conn():
@@ -568,42 +594,53 @@ async def start(msg: types.Message, state: FSMContext):
 # Кирим/Чиқим выбор
 @dp.callback_query_handler(lambda c: c.data.startswith('type_'), state=Form.type)
 async def process_type(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     t = 'Кирим' if call.data == 'type_kirim' else 'Чиқим'
     await state.update_data(type=t)
     await call.message.edit_text("<b>Объект номини tanlang:</b>", reply_markup=get_object_names_kb())
     await Form.object_name.set()
-    await call.answer()
 
 # Объект номи выбор
 @dp.callback_query_handler(lambda c: c.data.startswith('object_'), state=Form.object_name)
 async def process_object_name(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     object_name = call.data[7:]  # Убираем 'object_' префикс
     await state.update_data(object_name=object_name)
     await call.message.edit_text("<b>Харажат турини tanlang:</b>", reply_markup=get_expense_types_kb())
     await Form.expense_type.set()
-    await call.answer()
 
 # Харажат тури выбор
 @dp.callback_query_handler(lambda c: c.data.startswith('expense_'), state=Form.expense_type)
 async def process_expense_type(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     expense_type = call.data[8:]  # Убираем 'expense_' префикс
     await state.update_data(expense_type=expense_type)
     await call.message.edit_text("<b>Qanday to'lov turi? Сом yoki $?</b>", reply_markup=get_currency_types_kb())
     await Form.currency_type.set()
-    await call.answer()
 
 # Выбор валюты
 @dp.callback_query_handler(lambda c: c.data.startswith('currency_'), state=Form.currency_type)
 async def process_currency_type(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     currency = 'Сом' if call.data == 'currency_som' else 'Доллар'
     await state.update_data(currency_type=currency)
     await call.message.edit_text("<b>Summani kiriting:</b>")
     await Form.amount.set()
-    await call.answer()
 
 # Выбор типа оплаты
 @dp.callback_query_handler(lambda c: c.data.startswith('payment_'), state=Form.payment_type)
 async def process_payment_type(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     payment_map = {
         'payment_nah': 'Нахт',
         'payment_plastik': 'Пластик',
@@ -622,7 +659,6 @@ async def process_payment_type(call: types.CallbackQuery, state: FSMContext):
         await call.message.edit_text("<b>Изох kiriting (yoki пропустите):</b>", reply_markup=skip_kb)
     
     await Form.comment.set()
-    await call.answer()
 
 # Сумма
 @dp.message_handler(lambda m: m.text.replace('.', '', 1).isdigit(), state=Form.amount)
@@ -649,6 +685,9 @@ async def process_exchange_rate(msg: types.Message, state: FSMContext):
 # Кнопка пропуска комментария
 @dp.callback_query_handler(lambda c: c.data == 'skip_comment', state=Form.comment)
 async def skip_comment_btn(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     await state.update_data(comment='-')
     data = await state.get_data()
     # Set and save the final timestamp
@@ -659,7 +698,6 @@ async def skip_comment_btn(call: types.CallbackQuery, state: FSMContext):
     
     await call.message.answer(text, reply_markup=confirm_kb)
     await state.set_state('confirm')
-    await call.answer()
 
 # Комментарий (или пропуск)
 @dp.message_handler(state=Form.comment, content_types=types.ContentTypes.TEXT)
@@ -678,6 +716,9 @@ async def process_comment(msg: types.Message, state: FSMContext):
 # Обработка кнопок Да/Нет
 @dp.callback_query_handler(lambda c: c.data in ['confirm_yes', 'confirm_no'], state='confirm')
 async def process_confirm(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     if call.data == 'confirm_yes':
         data = await state.get_data()
         from datetime import datetime
@@ -750,8 +791,11 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                     await call.message.answer('⚠️ Xatolik: tasdiqlashga yuborish amalga oshmadi. Keyinroq urinib ko\'ring.')
             else:
                 # Обычная отправка в Google Sheet
-                add_to_google_sheet(data)
-                await call.message.answer('✅ Ma\'lumotlar Google Sheets-ga muvaffaqiyatli yuborildi!')
+                success = add_to_google_sheet(data)
+                if success:
+                    await call.message.answer('✅ Ma\'lumotlar Google Sheets-ga muvaffaqiyatli yuborildi!')
+                else:
+                    await call.message.answer('⚠️ Bu ma\'lumot allaqachon yozilgan. Qayta urinib ko\'rmang.')
 
                 # Уведомление для админов
                 user_name = get_user_name(call.from_user.id) or call.from_user.full_name
@@ -784,6 +828,9 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
 # Обработка одобрения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'), state='*')
 async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     logging.info(f"Одобрение больших сумм вызвано: {call.data}")
     
     if call.from_user.id not in ADMINS:
@@ -812,8 +859,11 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             logging.info(f"Найдены данные для одобрения: {saved_data}")
             
             # Отправляем в Google Sheet
-            add_to_google_sheet(saved_data)
-            logging.info("Данные отправлены в Google Sheet")
+            success = add_to_google_sheet(saved_data)
+            if success:
+                logging.info("Данные отправлены в Google Sheet")
+            else:
+                logging.info("Дублирование предотвращено при одобрении")
             
             # Отправляем сообщение пользователю
             await bot.send_message(user_id, '✅ Arizangiz tasdiqlandi! Ma\'lumotlar Google Sheet-ga yozildi.')
@@ -835,6 +885,9 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
 # Обработка отклонения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'), state='*')
 async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
+    # Сразу отвечаем на callback чтобы кнопка не "зависла"
+    await call.answer()
+    
     logging.info(f"Отклонение больших сумм вызвано: {call.data}")
     
     if call.from_user.id not in ADMINS:
