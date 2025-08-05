@@ -221,6 +221,7 @@ def clean_emoji(text):
 
 def add_to_google_sheet(data):
     from datetime import datetime
+    global recent_entries
     
     # Проверяем на дублирование
     user_id = data.get('user_id', '')
