@@ -873,15 +873,15 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             # Удаляем из хранилища
             del pending_approvals[approval_key]
             
-            # Убираем кнопки и оставляем только текст
-            await call.message.edit_text('✅ Ariza tasdiqlandi va Google Sheet-ga yozildi.', reply_markup=None)
+            # Убираем только кнопки, оставляем оригинальный текст
+            await call.message.edit_reply_markup(reply_markup=None)
         else:
             logging.error(f"Данные не найдены для ключа: {approval_key}")
             await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi.', reply_markup=None)
         
     except Exception as e:
         logging.error(f"Ошибка при одобрении: {e}")
-        await call.message.edit_text(f'❌ Tasdiqlashda xatolik: {e}', reply_markup=None)
+        await call.message.edit_reply_markup(reply_markup=None)
     
     await call.answer()
 
@@ -920,12 +920,12 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
             del pending_approvals[approval_key]
             logging.info(f"Заявка удалена из хранилища: {approval_key}")
         
-        # Убираем кнопки и оставляем только текст
-        await call.message.edit_text('❌ Ariza rad etildi.', reply_markup=None)
+        # Убираем только кнопки, оставляем оригинальный текст
+        await call.message.edit_reply_markup(reply_markup=None)
         
     except Exception as e:
         logging.error(f"Ошибка при отклонении: {e}")
-        await call.message.edit_text(f'❌ Rad etishda xatolik: {e}', reply_markup=None)
+        await call.message.edit_reply_markup(reply_markup=None)
     
     await call.answer()
 
