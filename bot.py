@@ -881,7 +881,7 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logging.error(f"Ошибка при одобрении: {e}")
-        await call.message.edit_text(f'❌ Tasdiqlashda xatolik: {e}')
+        await call.message.edit_text(f'❌ Tasdiqlashda xatolik: {e}', reply_markup=None)
     
     await call.answer()
 
