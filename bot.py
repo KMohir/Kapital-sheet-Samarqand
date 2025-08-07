@@ -359,6 +359,13 @@ def init_db():
         status TEXT,
         reg_date TEXT
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS admins (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT UNIQUE,
+        name TEXT,
+        added_by BIGINT,
+        added_date TEXT
+    )''')
     c.execute('''CREATE TABLE IF NOT EXISTS pay_types (
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE
@@ -390,6 +397,15 @@ def init_db():
         for name in ["🟥 Doimiy Xarajat", "🟩 Oʻzgaruvchan Xarajat", "🟪 Qarz", "⚪ Avtoprom", "🟩 Divident", "🟪 Soliq", "🟦 Ish Xaqi"]:
             c.execute('INSERT INTO categories (name) VALUES (%s)', (name,))
     
+    # Добавляем дефолтных админов
+    c.execute('SELECT COUNT(*) FROM admins')
+    if c.fetchone()[0] == 0:
+        from datetime import datetime
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for admin_id in ADMINS:
+            c.execute('INSERT INTO admins (user_id, name, added_by, added_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING',
+                      (admin_id, f'Admin {admin_id}', admin_id, current_time))
+    
     # Заполняем объекты номи
     for name in object_names:
         c.execute('INSERT INTO object_names (name) VALUES (%s)', (name,))
@@ -411,6 +427,50 @@ def get_user_status(user_id):
     row = c.fetchone()
     conn.close()
     return row[0] if row else None
+
+# --- Проверка является ли пользователь админом ---
+def is_admin(user_id):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('SELECT user_id FROM admins WHERE user_id=%s', (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+# --- Добавление нового админа ---
+def add_admin(user_id, name, added_by):
+    from datetime import datetime
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute('INSERT INTO admins (user_id, name, added_by, added_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING',
+                  (user_id, name, added_by, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        conn.commit()
+        return True
+    except IntegrityError:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+# --- Удаление админа ---
+def remove_admin(user_id):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('DELETE FROM admins WHERE user_id=%s', (user_id,))
+    result = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return result
+
+# --- Получение списка всех админов ---
+def get_all_admins():
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute('SELECT user_id, name, added_date FROM admins ORDER BY added_date')
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 # --- Регистрация пользователя ---
 def register_user(user_id, name, phone):
@@ -547,7 +607,8 @@ async def process_register_phone(msg: types.Message, state: FSMContext):
     register_user(user_id, name, phone)
     await msg.answer('⏳ Arizangiz adminga yuborildi. Iltimos, kuting.', reply_markup=types.ReplyKeyboardRemove())
     # Уведомление админа
-    for admin_id in ADMINS:
+    admins = get_all_admins()
+    for admin_id, admin_name, added_date in admins:
         kb = InlineKeyboardMarkup(row_width=2)
         kb.add(
             InlineKeyboardButton('✅ Ha', callback_data=f'approve_{user_id}'),
@@ -559,7 +620,7 @@ async def process_register_phone(msg: types.Message, state: FSMContext):
 # --- Обработка одобрения/запрета админом ---
 @dp.callback_query_handler(lambda c: (c.data.startswith('approve_') or c.data.startswith('deny_')) and not c.data.startswith('approve_large_') and not c.data.startswith('reject_large_'), state='*')
 async def process_admin_approve(call: types.CallbackQuery, state: FSMContext):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     action, user_id = call.data.split('_')
@@ -780,7 +841,8 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 
                 # Отправляем всем админам
                 sent_to_admin = False
-                for admin_id in ADMINS:
+                admins = get_all_admins()
+                for admin_id, admin_name, added_date in admins:
                     try:
                         await bot.send_message(admin_id, admin_approval_text, reply_markup=admin_kb)
                         sent_to_admin = True
@@ -835,7 +897,7 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
     
     logging.info(f"Одобрение больших сумм вызвано: {call.data}")
     
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     
@@ -893,7 +955,7 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     
     logging.info(f"Отклонение больших сумм вызвано: {call.data}")
     
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     
@@ -932,7 +994,7 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
 # --- Команды для админа ---
 @dp.message_handler(commands=['add_tolov'], state='*')
 async def add_paytype_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -956,7 +1018,7 @@ async def add_paytype_save(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['add_category'], state='*')
 async def add_category_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -982,7 +1044,7 @@ async def add_category_save(msg: types.Message, state: FSMContext):
 # --- Удаление и изменение To'lov turi ---
 @dp.message_handler(commands=['del_tolov'], state='*')
 async def del_tolov_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -993,7 +1055,7 @@ async def del_tolov_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_tolov_'))
 async def del_tolov_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     name = call.data[len('del_tolov_'):]
@@ -1007,7 +1069,7 @@ async def del_tolov_cb(call: types.CallbackQuery):
 
 @dp.message_handler(commands=['edit_tolov'], state='*')
 async def edit_tolov_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -1018,7 +1080,7 @@ async def edit_tolov_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_tolov_'))
 async def edit_tolov_cb(call: types.CallbackQuery, state: FSMContext):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     old_name = call.data[len('edit_tolov_'):]
@@ -1054,7 +1116,7 @@ async def del_category_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_category_'))
 async def del_category_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     name = call.data[len('del_category_'):]
@@ -1079,7 +1141,7 @@ async def edit_category_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_category_'))
 async def edit_category_cb(call: types.CallbackQuery, state: FSMContext):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     old_name = call.data[len('edit_category_'):]
@@ -1104,7 +1166,7 @@ async def edit_category_save(msg: types.Message, state: FSMContext):
 # --- Команды для управления объектами ---
 @dp.message_handler(commands=['add_object'], state='*')
 async def add_object_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()
@@ -1128,7 +1190,7 @@ async def add_object_save(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['add_expense'], state='*')
 async def add_expense_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()
@@ -1152,7 +1214,7 @@ async def add_expense_save(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['del_object'], state='*')
 async def del_object_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()
@@ -1163,7 +1225,7 @@ async def del_object_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_object_'))
 async def del_object_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     name = call.data[len('del_object_'):]
@@ -1177,7 +1239,7 @@ async def del_object_cb(call: types.CallbackQuery):
 
 @dp.message_handler(commands=['del_expense'], state='*')
 async def del_expense_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()
@@ -1188,7 +1250,7 @@ async def del_expense_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_expense_'))
 async def del_expense_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     name = call.data[len('del_expense_'):]
@@ -1202,7 +1264,7 @@ async def del_expense_cb(call: types.CallbackQuery):
 
 @dp.message_handler(commands=['check_sheets'], state='*')
 async def check_sheets_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()
@@ -1218,7 +1280,7 @@ async def check_sheets_cmd(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['update_lists'], state='*')
 async def update_lists_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     
@@ -1247,7 +1309,7 @@ async def update_lists_cmd(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['userslist'], state='*')
 async def users_list_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -1266,7 +1328,7 @@ async def users_list_cmd(msg: types.Message, state: FSMContext):
 
 @dp.message_handler(commands=['block_user'], state='*')
 async def block_user_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -1285,7 +1347,7 @@ async def block_user_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('blockuser_'))
 async def block_user_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     user_id = int(call.data[len('blockuser_'):])
@@ -1299,7 +1361,7 @@ async def block_user_cb(call: types.CallbackQuery):
 
 @dp.message_handler(commands=['approve_user'], state='*')
 async def approve_user_cmd(msg: types.Message, state: FSMContext):
-    if msg.from_user.id not in ADMINS:
+    if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
@@ -1318,7 +1380,7 @@ async def approve_user_cmd(msg: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('approveuser_'))
 async def approve_user_cb(call: types.CallbackQuery):
-    if call.from_user.id not in ADMINS:
+    if not is_admin(call.from_user.id):
         await call.answer('Faqat admin uchun!', show_alert=True)
         return
     user_id = int(call.data[len('approveuser_'):])
@@ -1329,6 +1391,125 @@ async def approve_user_cb(call: types.CallbackQuery):
         pass
     await call.message.edit_text(f'✅ Foydalanuvchi qayta tasdiqlandi: {user_id}')
     await call.answer()
+
+# --- Команды для управления админами ---
+@dp.message_handler(commands=['add_admin'], state='*')
+async def add_admin_cmd(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    await state.finish()
+    await msg.answer('Yangi admin ID raqamini yuboring:')
+    await state.set_state('add_admin_id')
+
+@dp.message_handler(state='add_admin_id', content_types=types.ContentTypes.TEXT)
+async def add_admin_id_save(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    
+    try:
+        user_id = int(msg.text.strip())
+        if user_id <= 0:
+            await msg.answer('❌ Noto‘g‘ri ID raqam!')
+            await state.finish()
+            return
+        
+        # Проверяем, не является ли уже админом
+        if is_admin(user_id):
+            await msg.answer('❌ Bu foydalanuvchi allaqachon admin!')
+            await state.finish()
+            return
+        
+        # Сохраняем ID для следующего шага
+        await state.update_data(admin_id=user_id)
+        await msg.answer('Yangi admin ismini yuboring:')
+        await state.set_state('add_admin_name')
+        
+    except ValueError:
+        await msg.answer('❌ Noto‘g‘ri format! Faqat raqam kiriting.')
+        await state.finish()
+
+@dp.message_handler(state='add_admin_name', content_types=types.ContentTypes.TEXT)
+async def add_admin_name_save(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    
+    data = await state.get_data()
+    user_id = data.get('admin_id')
+    admin_name = msg.text.strip()
+    
+    if add_admin(user_id, admin_name, msg.from_user.id):
+        await msg.answer(f'✅ Yangi admin qo‘shildi:\nID: <code>{user_id}</code>\nIsmi: <b>{admin_name}</b>')
+        try:
+            await bot.send_message(user_id, f'🎉 Sizga admin huquqlari berildi! Botda barcha admin funksiyalaridan foydalanishingiz mumkin.')
+        except Exception:
+            pass
+    else:
+        await msg.answer('❌ Xatolik yuz berdi!')
+    
+    await state.finish()
+
+@dp.message_handler(commands=['remove_admin'], state='*')
+async def remove_admin_cmd(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    await state.finish()
+    
+    admins = get_all_admins()
+    if not admins:
+        await msg.answer('Hali birorta ham admin yo‘q.')
+        return
+    
+    kb = InlineKeyboardMarkup(row_width=1)
+    for user_id, name, added_date in admins:
+        kb.add(InlineKeyboardButton(f'👤 {name} ({user_id})', callback_data=f'removeadmin_{user_id}'))
+    
+    await msg.answer('O\'chirish uchun adminni tanlang:', reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('removeadmin_'))
+async def remove_admin_cb(call: types.CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer('Faqat admin uchun!', show_alert=True)
+        return
+    
+    user_id = int(call.data[len('removeadmin_'):])
+    
+    # Нельзя удалить самого себя
+    if user_id == call.from_user.id:
+        await call.answer('❌ O\'zingizni o\'chira olmaysiz!', show_alert=True)
+        return
+    
+    if remove_admin(user_id):
+        await call.message.edit_text(f'✅ Admin o\'chirildi: {user_id}')
+        try:
+            await bot.send_message(user_id, '❌ Sizning admin huquqlaringiz olib tashlandi.')
+        except Exception:
+            pass
+    else:
+        await call.message.edit_text('❌ Xatolik yuz berdi!')
+    
+    await call.answer()
+
+@dp.message_handler(commands=['admins_list'], state='*')
+async def admins_list_cmd(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    await state.finish()
+    
+    admins = get_all_admins()
+    if not admins:
+        await msg.answer('Hali birorta ham admin yo‘q.')
+        return
+    
+    text = '<b>📋 Adminlar ro\'yxati:</b>\n\n'
+    for i, (user_id, name, added_date) in enumerate(admins, 1):
+        text += f"{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nQo'shilgan: {added_date}\n\n"
+    
+    await msg.answer(text)
 
 async def set_user_commands(dp):
     commands = [

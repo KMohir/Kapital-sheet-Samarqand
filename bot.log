@@ -1,34 +1,12 @@
 nohup: ignoring input
-INFO:aiogram:Bot: finansbot_uz_bot [@finansbotuz_bot]
+INFO:aiogram:Bot: Lobbyist.uz [@Lobbyistuz_bot]
 WARNING:aiogram:Updates were skipped successfully.
 INFO:aiogram.dispatcher.dispatcher:Start polling.
-ERROR:aiogram.dispatcher.dispatcher:Cause exception while getting updates.
-Traceback (most recent call last):
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 381, in start_polling
-    updates = await self.bot.get_updates(
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/bot.py", line 110, in get_updates
-    result = await self.request(api.Methods.GET_UPDATES, payload)
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/base.py", line 236, in request
-    return await api.make_request(await self.get_session(), self.server, self.__token, method, data, files,
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/api.py", line 140, in make_request
-    return check_result(method, response.content_type, response.status, await response.text())
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/api.py", line 119, in check_result
-    exceptions.ConflictError.detect(description)
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/utils/exceptions.py", line 140, in detect
-    raise err(cls.text or description)
-aiogram.utils.exceptions.TerminatedByOtherGetUpdates: Terminated by other getupdates request; make sure that only one bot instance is running
-ERROR:aiogram.dispatcher.dispatcher:Cause exception while getting updates.
-Traceback (most recent call last):
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 381, in start_polling
-    updates = await self.bot.get_updates(
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/bot.py", line 110, in get_updates
-    result = await self.request(api.Methods.GET_UPDATES, payload)
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/base.py", line 236, in request
-    return await api.make_request(await self.get_session(), self.server, self.__token, method, data, files,
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/api.py", line 140, in make_request
-    return check_result(method, response.content_type, response.status, await response.text())
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/bot/api.py", line 119, in check_result
-    exceptions.ConflictError.detect(description)
-  File "/home/mohirbek/Projects/SFX_SAVDO/venv/lib/python3.10/site-packages/aiogram/utils/exceptions.py", line 140, in detect
-    raise err(cls.text or description)
-aiogram.utils.exceptions.TerminatedByOtherGetUpdates: Terminated by other getupdates request; make sure that only one bot instance is running
+INFO:root:Данные сохранены для одобрения. Ключ: 5657091547_1754592250
+INFO:root:Сохраненные данные: {'type': 'Чиқим', 'object_name': 'Эшонгузар', 'expense_type': 'хозтавар', 'currency_type': 'Сом', 'amount': '1000000000', 'payment_type': 'Нахт', 'comment': '-', 'dt': '2025-08-07 23:44:08', 'dt_for_sheet': '8/7/2025', 'vaqt': '23:44', 'user_id': 5657091547, 'pending_approval': True, 'approval_timestamp': 1754592250}
+INFO:root:Все pending approvals: ['5657091547_1754592250']
+INFO:root:Одобрение больших сумм вызвано: approve_large_5657091547_1754592250
+INFO:root:Approval key: 5657091547_1754592250
+INFO:root:Pending approvals: ['5657091547_1754592250']
+INFO:root:Найдены данные для одобрения: {'type': 'Чиқим', 'object_name': 'Эшонгузар', 'expense_type': 'хозтавар', 'currency_type': 'Сом', 'amount': '1000000000', 'payment_type': 'Нахт', 'comment': '-', 'dt': '2025-08-07 23:44:08', 'dt_for_sheet': '8/7/2025', 'vaqt': '23:44', 'user_id': 5657091547, 'pending_approval': True, 'approval_timestamp': 1754592250}
+ERROR:root:Ошибка при одобрении: [Errno 2] No such file or directory: 'credentials.json'
