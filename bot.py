@@ -577,7 +577,7 @@ async def start(msg: types.Message, state: FSMContext):
         await msg.answer(text, reply_markup=kb)
         await Form.type.set()
     elif status == 'pending':
-        await msg.answer('⏳ Sizning arizangiz ko‘rib chiqilmoqda. Iltimos, kuting.')
+        await msg.answer('⏳ Sizning arizangiz ko\'rib chiqilmoqda. Iltimos, kuting.')
     elif status == 'denied':
         await msg.answer('❌ Sizga botdan foydalanishga ruxsat berilmagan.')
     else:
@@ -585,7 +585,6 @@ async def start(msg: types.Message, state: FSMContext):
         await state.set_state('register_name')
 
 # --- FSM для регистрации ---
-from aiogram.dispatcher.filters.state import State, StatesGroup
 class Register(StatesGroup):
     name = State()
     phone = State()
@@ -614,7 +613,7 @@ async def process_register_phone(msg: types.Message, state: FSMContext):
             InlineKeyboardButton('✅ Ha', callback_data=f'approve_{user_id}'),
             InlineKeyboardButton('❌ Yoq', callback_data=f'deny_{user_id}')
         )
-        await bot.send_message(admin_id, f'🆕 Yangi foydalanuvchi ro‘yxatdan o‘tdi:\nID: <code>{user_id}</code>\nIsmi: <b>{name}</b>\nTelefon: <code>{phone}</code>', reply_markup=kb)
+        await bot.send_message(admin_id, f'🆕 Yangi foydalanuvchi ro\'yxatdan o\'tdi:\nID: <code>{user_id}</code>\nIsmi: <b>{name}</b>\nTelefon: <code>{phone}</code>', reply_markup=kb)
     await state.finish()
 
 # --- Обработка одобрения/запрета админом ---
@@ -638,7 +637,7 @@ async def process_admin_approve(call: types.CallbackQuery, state: FSMContext):
 # --- Ограничение доступа для всех остальных хендлеров ---
 @dp.message_handler(lambda msg: get_user_status(msg.from_user.id) != 'approved', state='*')
 async def block_unapproved(msg: types.Message, state: FSMContext):
-    await msg.answer('⏳ Sizning arizangiz ko‘rib chiqilmoqda yoki sizga ruxsat berilmagan.')
+    await msg.answer('⏳ Sizning arizangiz ko\'rib chiqilmoqda yoki sizga ruxsat berilmagan.')
     await state.finish()
 
 # Старт
@@ -842,17 +841,26 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 # Отправляем всем админам
                 sent_to_admin = False
                 admins = get_all_admins()
+                logging.info(f"Найдено админов в базе: {len(admins)}")
                 for admin_id, admin_name, added_date in admins:
+                    logging.info(f"Пытаемся отправить уведомление админу {admin_id} ({admin_name})")
                     try:
                         await bot.send_message(admin_id, admin_approval_text, reply_markup=admin_kb)
                         sent_to_admin = True
+                        logging.info(f"✅ Уведомление успешно отправлено админу {admin_id}")
                     except Exception as e:
-                        logging.error(f"Could not send approval request to admin {admin_id}: {e}")
+                        error_msg = str(e)
+                        if "Chat not found" in error_msg:
+                            logging.error(f"❌ Админ {admin_id} ({admin_name}) не найден в чате. Возможно, не запустил бота или заблокировал его.")
+                        elif "Forbidden" in error_msg:
+                            logging.error(f"❌ Админ {admin_id} ({admin_name}) заблокировал бота.")
+                        else:
+                            logging.error(f"❌ Ошибка отправки админу {admin_id}: {error_msg}")
                 
                 if sent_to_admin:
                     await call.message.answer('⏳ Arizangiz administratorga yuborildi. Tasdiqlashni kuting.')
                 else:
-                    await call.message.answer('⚠️ Xatolik: tasdiqlashga yuborish amalga oshmadi. Keyinroq urinib ko\'ring.')
+                    await call.message.answer('⚠️ Xatolik: tasdiqlashga yuborish amalga oshmadi. Iltimos, administrator bilan bog\'laning.')
             else:
                 # Обычная отправка в Google Sheet
                 success = add_to_google_sheet(data)
@@ -866,11 +874,19 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 summary_text = format_summary(data)
                 admin_notification_text = f"Foydalanuvchi <b>{user_name}</b> tomonidan kiritilgan yangi ma'lumot:\n\n{summary_text}"
                 
-                for admin_id in ADMINS:
+                admins = get_all_admins()
+                for admin_id, admin_name, added_date in admins:
                     try:
                         await bot.send_message(admin_id, admin_notification_text)
+                        logging.info(f"✅ Уведомление отправлено админу {admin_id} ({admin_name})")
                     except Exception as e:
-                        logging.error(f"Could not send notification to admin {admin_id}: {e}")
+                        error_msg = str(e)
+                        if "Chat not found" in error_msg:
+                            logging.error(f"❌ Админ {admin_id} ({admin_name}) не найден в чате")
+                        elif "Forbidden" in error_msg:
+                            logging.error(f"❌ Админ {admin_id} ({admin_name}) заблокировал бота")
+                        else:
+                            logging.error(f"❌ Ошибка отправки админу {admin_id}: {error_msg}")
 
         except Exception as e:
             await call.message.answer(f'⚠️ Google Sheets-ga yuborishda xatolik: {e}')
@@ -998,7 +1014,7 @@ async def add_paytype_cmd(msg: types.Message, state: FSMContext):
         await msg.answer('Faqat admin uchun!')
         return
     await state.finish()  # Сброс состояния
-    await msg.answer('Yangi To‘lov turi nomini yuboring:')
+    await msg.answer('Yangi To\'lov turi nomini yuboring:')
     await state.set_state('add_paytype')
 
 @dp.message_handler(state='add_paytype', content_types=types.ContentTypes.TEXT)
@@ -1009,7 +1025,7 @@ async def add_paytype_save(msg: types.Message, state: FSMContext):
     try:
         c.execute('INSERT INTO pay_types (name) VALUES (%s)', (name,))
         conn.commit()
-        await msg.answer(f'✅ Yangi To‘lov turi qo‘shildi: {name}')
+        await msg.answer(f'✅ Yangi To\'lov turi qo\'shildi: {name}')
     except IntegrityError:
         await msg.answer('❗️ Bu nom allaqachon mavjud.')
         conn.rollback()
@@ -1034,7 +1050,7 @@ async def add_category_save(msg: types.Message, state: FSMContext):
     try:
         c.execute('INSERT INTO categories (name) VALUES (%s)', (name,))
         conn.commit()
-        await msg.answer(f'✅ Yangi kategoriya qo‘shildi: {name}')
+        await msg.answer(f'✅ Yangi kategoriya qo\'shildi: {name}')
     except IntegrityError:
         await msg.answer('❗️ Bu nom allaqachon mavjud.')
         conn.rollback()
@@ -1051,7 +1067,7 @@ async def del_tolov_cmd(msg: types.Message, state: FSMContext):
     kb = InlineKeyboardMarkup(row_width=1)
     for name in get_pay_types():
         kb.add(InlineKeyboardButton(f'❌ {name}', callback_data=f'del_tolov_{name}'))
-    await msg.answer('O‘chirish uchun To‘lov turini tanlang:', reply_markup=kb)
+    await msg.answer('O\'chirish uchun To\'lov turini tanlang:', reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_tolov_'))
 async def del_tolov_cb(call: types.CallbackQuery):
@@ -1064,7 +1080,7 @@ async def del_tolov_cb(call: types.CallbackQuery):
     c.execute('DELETE FROM pay_types WHERE name=%s', (name,))
     conn.commit()
     conn.close()
-    await call.message.edit_text(f'❌ To‘lov turi o‘chirildi: {name}')
+    await call.message.edit_text(f'❌ To\'lov turi o\'chirildi: {name}')
     await call.answer()
 
 @dp.message_handler(commands=['edit_tolov'], state='*')
@@ -1076,7 +1092,7 @@ async def edit_tolov_cmd(msg: types.Message, state: FSMContext):
     kb = InlineKeyboardMarkup(row_width=1)
     for name in get_pay_types():
         kb.add(InlineKeyboardButton(f'✏️ {name}', callback_data=f'edit_tolov_{name}'))
-    await msg.answer('Tahrirlash uchun To‘lov turini tanlang:', reply_markup=kb)
+    await msg.answer('Tahrirlash uchun To\'lov turini tanlang:', reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_tolov_'))
 async def edit_tolov_cb(call: types.CallbackQuery, state: FSMContext):
@@ -1099,7 +1115,7 @@ async def edit_tolov_save(msg: types.Message, state: FSMContext):
     c.execute('UPDATE pay_types SET name=%s WHERE name=%s', (new_name, old_name))
     conn.commit()
     conn.close()
-    await msg.answer(f'✏️ To‘lov turi o‘zgartirildi: {old_name} → {new_name}')
+    await msg.answer(f'✏️ To\'lov turi o\'zgartirildi: {old_name} -> {new_name}')
     await state.finish()
 
 # --- Удаление и изменение Kotegoriyalar ---
@@ -1112,7 +1128,7 @@ async def del_category_cmd(msg: types.Message, state: FSMContext):
     kb = InlineKeyboardMarkup(row_width=1)
     for name in get_categories():
         kb.add(InlineKeyboardButton(f'❌ {name}', callback_data=f'del_category_{name}'))
-    await msg.answer('O‘chirish uchun kategoriya tanlang:', reply_markup=kb)
+    await msg.answer('O\'chirish uchun kategoriya tanlang:', reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_category_'))
 async def del_category_cb(call: types.CallbackQuery):
@@ -1125,7 +1141,7 @@ async def del_category_cb(call: types.CallbackQuery):
     c.execute('DELETE FROM categories WHERE name=%s', (name,))
     conn.commit()
     conn.close()
-    await call.message.edit_text(f'❌ Kategoriya o‘chirildi: {name}')
+    await call.message.edit_text(f'❌ Kategoriya o\'chirildi: {name}')
     await call.answer()
 
 @dp.message_handler(commands=['edit_category'], state='*')
@@ -1160,7 +1176,7 @@ async def edit_category_save(msg: types.Message, state: FSMContext):
     c.execute('UPDATE categories SET name=%s WHERE name=%s', (new_name, old_name))
     conn.commit()
     conn.close()
-    await msg.answer(f'✏️ Kategoriya o‘zgartirildi: {old_name} → {new_name}')
+    await msg.answer(f'✏️ Kategoriya o\'zgartirildi: {old_name} -> {new_name}')
     await state.finish()
 
 # --- Команды для управления объектами ---
@@ -1319,11 +1335,11 @@ async def users_list_cmd(msg: types.Message, state: FSMContext):
     rows = c.fetchall()
     conn.close()
     if not rows:
-        await msg.answer('Hali birorta ham tasdiqlangan foydalanuvchi yo‘q.')
+        await msg.answer('Hali birorta ham tasdiqlangan foydalanuvchi yo\'q.')
         return
     text = '<b>Tasdiqlangan foydalanuvchilar:</b>\n'
     for i, (user_id, name, phone, reg_date) in enumerate(rows, 1):
-        text += f"\n{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nTelefon: <code>{phone}</code>\nRo‘yxatdan o‘tgan: {reg_date}\n"
+        text += f"\n{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nTelefon: <code>{phone}</code>\nRo'yxatdan o'tgan: {reg_date}\n"
     await msg.answer(text)
 
 @dp.message_handler(commands=['block_user'], state='*')
@@ -1338,7 +1354,7 @@ async def block_user_cmd(msg: types.Message, state: FSMContext):
     rows = c.fetchall()
     conn.close()
     if not rows:
-        await msg.answer('Hali birorta ham tasdiqlangan foydalanuvchi yo‘q.')
+        await msg.answer('Hali birorta ham tasdiqlangan foydalanuvchi yo\'q.')
         return
     kb = InlineKeyboardMarkup(row_width=1)
     for user_id, name in rows:
@@ -1371,7 +1387,7 @@ async def approve_user_cmd(msg: types.Message, state: FSMContext):
     rows = c.fetchall()
     conn.close()
     if not rows:
-        await msg.answer('Hali birorta ham bloklangan foydalanuvchi yo‘q.')
+        await msg.answer('Hali birorta ham bloklangan foydalanuvchi yo\'q.')
         return
     kb = InlineKeyboardMarkup(row_width=1)
     for user_id, name in rows:
@@ -1411,7 +1427,7 @@ async def add_admin_id_save(msg: types.Message, state: FSMContext):
     try:
         user_id = int(msg.text.strip())
         if user_id <= 0:
-            await msg.answer('❌ Noto‘g‘ri ID raqam!')
+            await msg.answer('❌ Noto\'g\'ri ID raqam!')
             await state.finish()
             return
         
@@ -1427,7 +1443,7 @@ async def add_admin_id_save(msg: types.Message, state: FSMContext):
         await state.set_state('add_admin_name')
         
     except ValueError:
-        await msg.answer('❌ Noto‘g‘ri format! Faqat raqam kiriting.')
+        await msg.answer('❌ Noto\'g\'ri format! Faqat raqam kiriting.')
         await state.finish()
 
 @dp.message_handler(state='add_admin_name', content_types=types.ContentTypes.TEXT)
@@ -1441,7 +1457,7 @@ async def add_admin_name_save(msg: types.Message, state: FSMContext):
     admin_name = msg.text.strip()
     
     if add_admin(user_id, admin_name, msg.from_user.id):
-        await msg.answer(f'✅ Yangi admin qo‘shildi:\nID: <code>{user_id}</code>\nIsmi: <b>{admin_name}</b>')
+        await msg.answer(f'✅ Yangi admin qo'shildi:\nID: <code>{user_id}</code>\nIsmi: <b>{admin_name}</b>')
         try:
             await bot.send_message(user_id, f'🎉 Sizga admin huquqlari berildi! Botda barcha admin funksiyalaridan foydalanishingiz mumkin.')
         except Exception:
@@ -1460,14 +1476,14 @@ async def remove_admin_cmd(msg: types.Message, state: FSMContext):
     
     admins = get_all_admins()
     if not admins:
-        await msg.answer('Hali birorta ham admin yo‘q.')
+        await msg.answer('Hali birorta ham admin yo'q.')
         return
     
     kb = InlineKeyboardMarkup(row_width=1)
     for user_id, name, added_date in admins:
         kb.add(InlineKeyboardButton(f'👤 {name} ({user_id})', callback_data=f'removeadmin_{user_id}'))
     
-    await msg.answer('O\'chirish uchun adminni tanlang:', reply_markup=kb)
+    await msg.answer('O'chirish uchun adminni tanlang:', reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('removeadmin_'))
 async def remove_admin_cb(call: types.CallbackQuery):
@@ -1479,11 +1495,11 @@ async def remove_admin_cb(call: types.CallbackQuery):
     
     # Нельзя удалить самого себя
     if user_id == call.from_user.id:
-        await call.answer('❌ O\'zingizni o\'chira olmaysiz!', show_alert=True)
+        await call.answer('❌ O'zingizni o'chira olmaysiz!', show_alert=True)
         return
     
     if remove_admin(user_id):
-        await call.message.edit_text(f'✅ Admin o\'chirildi: {user_id}')
+        await call.message.edit_text(f'✅ Admin o'chirildi: {user_id}')
         try:
             await bot.send_message(user_id, '❌ Sizning admin huquqlaringiz olib tashlandi.')
         except Exception:
@@ -1502,12 +1518,43 @@ async def admins_list_cmd(msg: types.Message, state: FSMContext):
     
     admins = get_all_admins()
     if not admins:
-        await msg.answer('Hali birorta ham admin yo‘q.')
+        await msg.answer('Hali birorta ham admin yo'q.')
         return
     
-    text = '<b>📋 Adminlar ro\'yxati:</b>\n\n'
+    text = '<b>📋 Adminlar ro'yxati:</b>\n\n'
     for i, (user_id, name, added_date) in enumerate(admins, 1):
         text += f"{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nQo'shilgan: {added_date}\n\n"
+    
+    await msg.answer(text)
+
+@dp.message_handler(commands=['check_admins'], state='*')
+async def check_admins_cmd(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
+        return
+    await state.finish()
+    
+    admins = get_all_admins()
+    if not admins:
+        await msg.answer('Hali birorta ham admin yo'q.')
+        return
+    
+    text = '<b>🔍 Adminlar holati:</b>\n\n'
+    for i, (user_id, name, added_date) in enumerate(admins, 1):
+        try:
+            # Пытаемся отправить тестовое сообщение
+            await bot.send_chat_action(user_id, 'typing')
+            status = "✅ Faol"
+        except Exception as e:
+            error_msg = str(e)
+            if "Chat not found" in error_msg:
+                status = "❌ Botni ishga tushirmagan"
+            elif "Forbidden" in error_msg:
+                status = "🚫 Botni bloklagan"
+            else:
+                status = f"❓ Xatolik: {error_msg}"
+        
+        text += f"{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nHolat: {status}\n\n"
     
     await msg.answer(text)
 
@@ -1535,4 +1582,4 @@ if __name__ == '__main__':
     async def on_startup(dp):
         await set_user_commands(dp)
         await notify_all_users(dp.bot)
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup) 
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
