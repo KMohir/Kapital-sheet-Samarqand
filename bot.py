@@ -1457,7 +1457,7 @@ async def add_admin_name_save(msg: types.Message, state: FSMContext):
     admin_name = msg.text.strip()
     
     if add_admin(user_id, admin_name, msg.from_user.id):
-        await msg.answer(f'✅ Yangi admin qo'shildi:\nID: <code>{user_id}</code>\nIsmi: <b>{admin_name}</b>')
+        await msg.answer(f"✅ Yangi admin qo'shildi:\nID: <code>{user_id}</code>\nIsmi: <b>{admin_name}</b>")
         try:
             await bot.send_message(user_id, f'🎉 Sizga admin huquqlari berildi! Botda barcha admin funksiyalaridan foydalanishingiz mumkin.')
         except Exception:
@@ -1476,14 +1476,15 @@ async def remove_admin_cmd(msg: types.Message, state: FSMContext):
     
     admins = get_all_admins()
     if not admins:
-        await msg.answer('Hali birorta ham admin yo'q.')
+        await msg.answer("Hali birorta ham admin yo'q.")
+
         return
     
     kb = InlineKeyboardMarkup(row_width=1)
     for user_id, name, added_date in admins:
         kb.add(InlineKeyboardButton(f'👤 {name} ({user_id})', callback_data=f'removeadmin_{user_id}'))
     
-    await msg.answer('O'chirish uchun adminni tanlang:', reply_markup=kb)
+    await msg.answer("O'chirish uchun adminni tanlang:", reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('removeadmin_'))
 async def remove_admin_cb(call: types.CallbackQuery):
@@ -1495,11 +1496,11 @@ async def remove_admin_cb(call: types.CallbackQuery):
     
     # Нельзя удалить самого себя
     if user_id == call.from_user.id:
-        await call.answer('❌ O'zingizni o'chira olmaysiz!', show_alert=True)
+        await call.answer("❌ O'zingizni o'chira olmaysiz!", show_alert=True)
         return
     
     if remove_admin(user_id):
-        await call.message.edit_text(f'✅ Admin o'chirildi: {user_id}')
+        await call.message.edit_text(f"✅ Admin o'chirildi: {user_id}")
         try:
             await bot.send_message(user_id, '❌ Sizning admin huquqlaringiz olib tashlandi.')
         except Exception:
@@ -1518,10 +1519,10 @@ async def admins_list_cmd(msg: types.Message, state: FSMContext):
     
     admins = get_all_admins()
     if not admins:
-        await msg.answer('Hali birorta ham admin yo'q.')
+        await msg.answer("Hali birorta ham admin yo'q.")
         return
     
-    text = '<b>📋 Adminlar ro'yxati:</b>\n\n'
+    text = "<b>📋 Adminlar ro'yxati:</b>\n\n"
     for i, (user_id, name, added_date) in enumerate(admins, 1):
         text += f"{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nQo'shilgan: {added_date}\n\n"
     
@@ -1536,7 +1537,8 @@ async def check_admins_cmd(msg: types.Message, state: FSMContext):
     
     admins = get_all_admins()
     if not admins:
-        await msg.answer('Hali birorta ham admin yo'q.')
+        await msg.answer("Hali birorta ham admin yo'q.")
+        
         return
     
     text = '<b>🔍 Adminlar holati:</b>\n\n'
