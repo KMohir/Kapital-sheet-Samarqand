@@ -15,6 +15,7 @@ import sqlite3
 import psycopg2
 from psycopg2 import sql, IntegrityError
 import re
+import json
 
 # Загрузка переменных окружения
 env = Env()
@@ -332,9 +333,6 @@ def format_summary(data):
 # --- Админы ---
 ADMINS = [5657091547, 5048593195]  # Здесь можно добавить id других админов через запятую
 
-# Хранилище для данных, ожидающих одобрения
-pending_approvals = {}
-
 # Хранилище для отслеживания последних записей (защита от дублирования)
 recent_entries = {}
 
@@ -381,6 +379,13 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS expense_types (
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pending_approvals (
+        id SERIAL PRIMARY KEY,
+        approval_key TEXT UNIQUE,
+        user_id BIGINT,
+        data JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     # Очищаем старые данные
@@ -468,9 +473,9 @@ def get_all_admins():
     conn = get_db_conn()
     c = conn.cursor()
     c.execute('SELECT user_id, name, added_date FROM admins ORDER BY added_date')
-    rows = c.fetchall()
+    admins = c.fetchall()
     conn.close()
-    return rows
+    return admins
 
 # --- Регистрация пользователя ---
 def register_user(user_id, name, phone):
@@ -828,15 +833,17 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                     InlineKeyboardButton('❌ Rad etish', callback_data=f'reject_large_{call.from_user.id}_{int(dt.timestamp())}')
                 )
                 
-                # Сохраняем данные для последующего использования
+                # Сохраняем данные для последующего использования в базе данных
                 approval_key = f"{call.from_user.id}_{int(dt.timestamp())}"
-                pending_approvals[approval_key] = data
                 data['pending_approval'] = True
                 data['approval_timestamp'] = int(dt.timestamp())
                 
-                logging.info(f"Данные сохранены для одобрения. Ключ: {approval_key}")
-                logging.info(f"Сохраненные данные: {data}")
-                logging.info(f"Все pending approvals: {list(pending_approvals.keys())}")
+                # Сохраняем в базе данных
+                if save_pending_approval(approval_key, call.from_user.id, data):
+                    logging.info(f"Данные сохранены в базе данных для одобрения. Ключ: {approval_key}")
+                    logging.info(f"Сохраненные данные: {data}")
+                else:
+                    logging.error(f"Ошибка сохранения данных в базе данных для ключа: {approval_key}")
                 
                 # Отправляем всем админам
                 sent_to_admin = False
@@ -924,18 +931,11 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
     approval_key = f"{user_id}_{timestamp}"
     
     logging.info(f"Approval key: {approval_key}")
-    logging.info(f"Pending approvals: {list(pending_approvals.keys())}")
-    
-    # Сбрасываем состояние FSM для пользователя, который отправил заявку
-    try:
-        await state.finish()
-    except:
-        pass
     
     try:
-        # Получаем сохраненные данные
-        if approval_key in pending_approvals:
-            saved_data = pending_approvals[approval_key]
+        # Получаем сохраненные данные из базы данных
+        saved_data = get_pending_approval(approval_key)
+        if saved_data:
             logging.info(f"Найдены данные для одобрения: {saved_data}")
             
             # Отправляем в Google Sheet
@@ -948,18 +948,54 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             # Отправляем сообщение пользователю
             await bot.send_message(user_id, '✅ Arizangiz tasdiqlandi! Ma\'lumotlar Google Sheet-ga yozildi.')
             
-            # Удаляем из хранилища
-            del pending_approvals[approval_key]
+            # Удаляем из базы данных
+            delete_pending_approval(approval_key)
+            
+            # Останавливаем FSM для пользователя, который отправил заявку
+            try:
+                # Создаем новый FSM контекст для пользователя, который отправил заявку
+                from aiogram.dispatcher import FSMContext
+                user_state = FSMContext(storage=state.storage, key=state.key)
+                user_state.key = (user_state.key[0], user_id, user_state.key[2])
+                await user_state.finish()
+                logging.info(f"FSM остановлен для пользователя {user_id}")
+            except Exception as e:
+                logging.error(f"Ошибка при остановке FSM для пользователя {user_id}: {e}")
+            
+            # Отправляем меню выбора операции
+            text = "<b>Qaysi turdagi operatsiya?</b>"
+            kb = InlineKeyboardMarkup(row_width=2)
+            kb.add(
+                InlineKeyboardButton('🟢 Кирим', callback_data='type_kirim'),
+                InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
+            )
+            await bot.send_message(user_id, text, reply_markup=kb)
             
             # Убираем только кнопки, оставляем оригинальный текст
-            await call.message.edit_reply_markup(reply_markup=None)
+            try:
+                await call.message.edit_reply_markup(reply_markup=None)
+            except Exception as edit_error:
+                if "Message is not modified" in str(edit_error):
+                    logging.info("Сообщение уже не имеет кнопок")
+                else:
+                    logging.error(f"Ошибка при удалении кнопок: {edit_error}")
         else:
-            logging.error(f"Данные не найдены для ключа: {approval_key}")
-            await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi.', reply_markup=None)
+            logging.error(f"Данные не найдены в базе данных для ключа: {approval_key}")
+            # Проверяем, существует ли заявка
+            if check_approval_status(approval_key):
+                await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi. Boshqa admin tomonidan tasdiqlangan bo\'lishi mumkin.', reply_markup=None)
+            else:
+                await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi.', reply_markup=None)
         
     except Exception as e:
         logging.error(f"Ошибка при одобрении: {e}")
-        await call.message.edit_reply_markup(reply_markup=None)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception as edit_error:
+            if "Message is not modified" in str(edit_error):
+                logging.info("Сообщение уже не имеет кнопок")
+            else:
+                logging.error(f"Ошибка при удалении кнопок: {edit_error}")
     
     await call.answer()
 
@@ -983,27 +1019,58 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     
     logging.info(f"Rejection key: {approval_key}")
     
-    # Сбрасываем состояние FSM для пользователя, который отправил заявку
-    try:
-        await state.finish()
-    except:
-        pass
-    
     try:
         # Отправляем сообщение пользователю
         await bot.send_message(user_id, '❌ Arizangiz administrator tomonidan rad etildi.')
         
-        # Удаляем из хранилища
-        if approval_key in pending_approvals:
-            del pending_approvals[approval_key]
-            logging.info(f"Заявка удалена из хранилища: {approval_key}")
+        # Удаляем из базы данных
+        if delete_pending_approval(approval_key):
+            logging.info(f"Заявка удалена из базы данных: {approval_key}")
+        else:
+            logging.warning(f"Заявка не найдена в базе данных для удаления: {approval_key}")
+            # Проверяем, может быть другой админ уже обработал заявку
+            if not check_approval_status(approval_key):
+                await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi. Boshqa admin tomonidan tasdiqlangan yoki rad etilgan bo\'lishi mumkin.', reply_markup=None)
+                return
+        
+        # Останавливаем FSM для пользователя, который отправил заявку
+        try:
+            # Создаем новый FSM контекст для пользователя, который отправил заявку
+            from aiogram.dispatcher import FSMContext
+            user_state = FSMContext(storage=state.storage, key=state.key)
+            user_state.key = (user_state.key[0], user_id, user_state.key[2])
+            await user_state.finish()
+            logging.info(f"FSM остановлен для пользователя {user_id}")
+        except Exception as e:
+            logging.error(f"Ошибка при остановке FSM для пользователя {user_id}: {e}")
+        
+        # Отправляем меню выбора операции
+        text = "<b>Qaysi turdagi operatsiya?</b>"
+        kb = InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            InlineKeyboardButton('🟢 Кирим', callback_data='type_kirim'),
+            InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
+        )
+        await bot.send_message(user_id, text, reply_markup=kb)
         
         # Убираем только кнопки, оставляем оригинальный текст
-        await call.message.edit_reply_markup(reply_markup=None)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception as edit_error:
+            if "Message is not modified" in str(edit_error):
+                logging.info("Сообщение уже не имеет кнопок")
+            else:
+                logging.error(f"Ошибка при удалении кнопок: {edit_error}")
         
     except Exception as e:
         logging.error(f"Ошибка при отклонении: {e}")
-        await call.message.edit_reply_markup(reply_markup=None)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception as edit_error:
+            if "Message is not modified" in str(edit_error):
+                logging.info("Сообщение уже не имеет кнопок")
+            else:
+                logging.error(f"Ошибка при удалении кнопок: {edit_error}")
     
     await call.answer()
 
@@ -1533,32 +1600,37 @@ async def check_admins_cmd(msg: types.Message, state: FSMContext):
     if not is_admin(msg.from_user.id):
         await msg.answer('Faqat admin uchun!')
         return
-    await state.finish()
     
     admins = get_all_admins()
-    if not admins:
-        await msg.answer("Hali birorta ham admin yo'q.")
-        
+    if admins:
+        admin_list = "📋 <b>Ro'yxatdagi adminlar:</b>\n\n"
+        for i, (admin_id, name, added_date) in enumerate(admins, 1):
+            admin_list += f"{i}. <b>{name}</b> (ID: {admin_id})\n"
+            admin_list += f"   Qo'shilgan: {added_date}\n\n"
+        await msg.answer(admin_list)
+    else:
+        await msg.answer("❌ Adminlar topilmadi.")
+
+@dp.message_handler(commands=['pending_approvals'], state='*')
+async def pending_approvals_cmd(msg: types.Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        await msg.answer('Faqat admin uchun!')
         return
     
-    text = '<b>🔍 Adminlar holati:</b>\n\n'
-    for i, (user_id, name, added_date) in enumerate(admins, 1):
-        try:
-            # Пытаемся отправить тестовое сообщение
-            await bot.send_chat_action(user_id, 'typing')
-            status = "✅ Faol"
-        except Exception as e:
-            error_msg = str(e)
-            if "Chat not found" in error_msg:
-                status = "❌ Botni ishga tushirmagan"
-            elif "Forbidden" in error_msg:
-                status = "🚫 Botni bloklagan"
-            else:
-                status = f"❓ Xatolik: {error_msg}"
-        
-        text += f"{i}. <b>{name}</b>\nID: <code>{user_id}</code>\nHolat: {status}\n\n"
-    
-    await msg.answer(text)
+    pending_list = get_all_pending_approvals()
+    if pending_list:
+        response = "📋 <b>Kutilayotgan tasdiqlashlar:</b>\n\n"
+        for i, approval in enumerate(pending_list, 1):
+            data = approval['data']
+            user_name = get_user_name(approval['user_id']) or f"User {approval['user_id']}"
+            response += f"{i}. <b>{user_name}</b> (ID: {approval['user_id']})\n"
+            response += f"   Tur: {data.get('type', 'N/A')}\n"
+            response += f"   Summa: {data.get('amount', 'N/A')} {data.get('currency_type', '')}\n"
+            response += f"   Vaqt: {approval['created_at']}\n"
+            response += f"   Key: {approval['approval_key']}\n\n"
+        await msg.answer(response)
+    else:
+        await msg.answer("✅ Kutilayotgan tasdiqlashlar yo'q.")
 
 async def set_user_commands(dp):
     commands = [
@@ -1578,6 +1650,118 @@ async def notify_all_users(bot):
             await bot.send_message(user_id, "Iltimos, /start ni bosing va botdan foydalanishni davom eting!")
         except Exception:
             pass  # Пользователь мог заблокировать бота или быть недоступен
+
+# --- Функции для работы с данными одобрения в базе данных ---
+def save_pending_approval(approval_key, user_id, data):
+    import json
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        json_data = json.dumps(data)
+        logging.info(f"Сохраняем данные в БД. Ключ: {approval_key}, JSON: {json_data[:100]}...")
+        c.execute('INSERT INTO pending_approvals (approval_key, user_id, data) VALUES (%s, %s, %s) ON CONFLICT (approval_key) DO NOTHING',
+                  (approval_key, user_id, json_data))
+        conn.commit()
+        logging.info(f"Данные успешно сохранены в БД для ключа: {approval_key}")
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка сохранения данных одобрения: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_pending_approval(approval_key):
+    import json
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT data FROM pending_approvals WHERE approval_key = %s', (approval_key,))
+        row = c.fetchone()
+        if row:
+            data = row[0]
+            logging.info(f"Получены данные из БД для ключа {approval_key}. Тип: {type(data)}")
+            
+            # Если данные уже словарь, возвращаем как есть
+            if isinstance(data, dict):
+                logging.info(f"Данные уже в формате словаря: {data}")
+                return data
+            # Если это строка JSON, парсим её
+            elif isinstance(data, str):
+                logging.info(f"Парсим JSON строку: {data[:100]}...")
+                return json.loads(data)
+            else:
+                logging.error(f"Неожиданный тип данных: {type(data)}, значение: {data}")
+                return None
+        else:
+            logging.info(f"Данные не найдены в БД для ключа: {approval_key}")
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка получения данных одобрения: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_pending_approval(approval_key):
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM pending_approvals WHERE approval_key = %s', (approval_key,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка удаления данных одобрения: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_all_pending_approvals():
+    import json
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT approval_key, user_id, data, created_at FROM pending_approvals ORDER BY created_at DESC')
+        rows = c.fetchall()
+        result = []
+        for row in rows:
+            data = row[2]
+            # Если данные уже словарь, используем как есть
+            if isinstance(data, dict):
+                parsed_data = data
+            # Если это строка JSON, парсим её
+            elif isinstance(data, str):
+                parsed_data = json.loads(data)
+            else:
+                logging.error(f"Неожиданный тип данных: {type(data)}")
+                continue
+                
+            result.append({
+                'approval_key': row[0],
+                'user_id': row[1],
+                'data': parsed_data,
+                'created_at': row[3]
+            })
+        return result
+    except Exception as e:
+        logging.error(f"Ошибка получения всех данных одобрения: {e}")
+        return []
+    finally:
+        conn.close()
+
+def check_approval_status(approval_key):
+    """Проверяет, существует ли заявка в базе данных"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT COUNT(*) FROM pending_approvals WHERE approval_key = %s', (approval_key,))
+        count = c.fetchone()[0]
+        return count > 0
+    except Exception as e:
+        logging.error(f"Ошибка проверки статуса заявки: {e}")
+        return False
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
     from aiogram import executor
