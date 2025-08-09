@@ -22,7 +22,16 @@ env = Env()
 env.read_env()
 API_TOKEN = env.str('BOT_TOKEN')
 
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(bot, storage=MemoryStorage())
@@ -246,6 +255,31 @@ def clean_emoji(text):
     # Удаляет только эмодзи/спецсимволы в начале строки, остальной текст не трогает
     return re.sub(r'^[^\w\s]+', '', text).strip()
 
+async def safe_answer_callback(call, **kwargs):
+    """Безопасно отвечает на callback query с обработкой ошибок"""
+    # Проверяем, не был ли уже обработан этот callback
+    if is_callback_processed(call.id):
+        logging.info(f"Callback {call.id} уже был обработан, пропускаем")
+        return
+    
+    # Отмечаем callback как обработанный
+    mark_callback_processed(call.id)
+    
+    try:
+        await call.answer(**kwargs)
+    except Exception as e:
+        error_str = str(e)
+        if any(phrase in error_str for phrase in [
+            "Query is too old", 
+            "InvalidQueryID", 
+            "query id is invalid",
+            "response timeout expired"
+        ]):
+            logging.warning(f"Callback query истек или недействителен: {e}")
+        else:
+            logging.warning(f"Не удалось ответить на callback query: {e}")
+        # Игнорируем ошибку, так как callback уже устарел или недействителен
+
 def add_to_google_sheet(data):
     from datetime import datetime
     global recent_entries
@@ -360,6 +394,49 @@ ADMINS = [5657091547, 5048593195]  # Здесь можно добавить id �
 
 # Хранилище для отслеживания последних записей (защита от дублирования)
 recent_entries = {}
+
+# Глобальный словарь для отслеживания обработанных callback'ов
+processed_callbacks = set()
+
+def is_callback_processed(callback_id):
+    """Проверяет, был ли уже обработан callback с данным ID"""
+    return callback_id in processed_callbacks
+
+def mark_callback_processed(callback_id):
+    """Отмечает callback как обработанный"""
+    processed_callbacks.add(callback_id)
+    # Ограничиваем размер словаря для предотвращения утечек памяти
+    if len(processed_callbacks) > 10000:
+        # Удаляем старые записи, оставляя только последние 5000
+        old_callbacks = list(processed_callbacks)[:-5000]
+        for old_id in old_callbacks:
+            processed_callbacks.discard(old_id)
+
+# Хранилище для отслеживания последних отправленных сообщений о балансе (защита от дублирования)
+recent_balance_messages = {}
+
+def is_balance_message_duplicate(user_id, operation_type, amount, currency, timestamp):
+    """Проверяет, не является ли сообщение о балансе дубликатом"""
+    key = f"{user_id}_{operation_type}_{amount}_{currency}"
+    
+    # Проверяем, есть ли уже такое сообщение
+    if key in recent_balance_messages:
+        last_time = recent_balance_messages[key]
+        # Если прошло меньше 5 секунд, считаем дубликатом
+        if (timestamp - last_time).total_seconds() < 5:
+            return True
+    
+    # Обновляем время последнего сообщения
+    recent_balance_messages[key] = timestamp
+    
+    # Ограничиваем размер словаря
+    if len(recent_balance_messages) > 1000:
+        # Удаляем старые записи
+        old_keys = list(recent_balance_messages.keys())[:-500]
+        for old_key in old_keys:
+            del recent_balance_messages[old_key]
+    
+    return False
 
 # --- Инициализация БД ---
 def get_db_conn():
@@ -650,7 +727,7 @@ async def process_register_phone(msg: types.Message, state: FSMContext):
 @dp.callback_query_handler(lambda c: (c.data.startswith('approve_') or c.data.startswith('deny_')) and not c.data.startswith('approve_large_') and not c.data.startswith('reject_large_'), state='*')
 async def process_admin_approve(call: types.CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
-        await call.answer('Faqat admin uchun!', show_alert=True)
+        await safe_answer_callback(call, text='Faqat admin uchun!', show_alert=True)
         return
     action, user_id = call.data.split('_')
     user_id = int(user_id)
@@ -662,7 +739,7 @@ async def process_admin_approve(call: types.CallbackQuery, state: FSMContext):
         update_user_status(user_id, 'denied')
         await bot.send_message(user_id, '❌ Sizga botdan foydalanishga ruxsat berilmagan.')
         await call.message.edit_text('❌ Foydalanuvchi rad etildi.')
-    await call.answer()
+    await safe_answer_callback(call)
 
 # --- Ограничение доступа для всех остальных хендлеров ---
 @dp.message_handler(lambda msg: get_user_status(msg.from_user.id) != 'approved', state='*')
@@ -671,9 +748,8 @@ async def block_unapproved(msg: types.Message, state: FSMContext):
     await state.finish()
 
 # Старт
-@dp.message_handler(CommandStart())
-async def start(msg: types.Message, state: FSMContext):
-    await state.finish()
+async def show_main_menu(msg: types.Message, state: FSMContext):
+    """Показывает главное меню выбора типа операции"""
     text = "<b>Qaysi turdagi operatsiya?</b>"
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -682,12 +758,41 @@ async def start(msg: types.Message, state: FSMContext):
     )
     await msg.answer(text, reply_markup=kb)
     await Form.type.set()
+    
+    logging.info(f"Главное меню показано пользователю {msg.from_user.id}")
+
+@dp.message_handler(CommandStart())
+async def start(msg: types.Message, state: FSMContext):
+    """Обработчик команды /start"""
+    logging.info(f"Команда /start вызвана пользователем {msg.from_user.id}")
+    
+    # Сбрасываем FSM состояние (на всякий случай)
+    await state.finish()
+    
+    # Показываем главное меню
+    await show_main_menu(msg, state)
+
+@dp.message_handler(commands=['reboot'], state='*')
+async def reboot_cmd(msg: types.Message, state: FSMContext):
+    """Команда для перезапуска бота и сброса FSM состояния"""
+    logging.info(f"Команда /reboot вызвана пользователем {msg.from_user.id}")
+    
+    # Сбрасываем FSM состояние
+    await state.finish()
+    
+    # Отправляем сообщение о перезапуске
+    await msg.answer("🔄 Bot qayta ishga tushirildi! FSM holati tozalandi.")
+    
+    # Показываем главное меню
+    await show_main_menu(msg, state)
+    
+    logging.info(f"Пользователь {msg.from_user.id} возвращен к начальному состоянию FSM")
 
 # Кирим/Чиқим выбор
 @dp.callback_query_handler(lambda c: c.data.startswith('type_'), state=Form.type)
 async def process_type(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     t = 'Кирим' if call.data == 'type_kirim' else 'Чиқим'
     await state.update_data(type=t)
@@ -698,7 +803,7 @@ async def process_type(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith('object_'), state=Form.object_name)
 async def process_object_name(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     object_name = call.data[7:]  # Убираем 'object_' префикс
     await state.update_data(object_name=object_name)
@@ -709,7 +814,7 @@ async def process_object_name(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith('expense_'), state=Form.expense_type)
 async def process_expense_type(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     expense_type = call.data[8:]  # Убираем 'expense_' префикс
     await state.update_data(expense_type=expense_type)
@@ -720,7 +825,7 @@ async def process_expense_type(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith('currency_'), state=Form.currency_type)
 async def process_currency_type(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     currency = 'Сом' if call.data == 'currency_som' else 'Доллар'
     await state.update_data(currency_type=currency)
@@ -731,7 +836,7 @@ async def process_currency_type(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith('payment_'), state=Form.payment_type)
 async def process_payment_type(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     payment_map = {
         'payment_nah': 'Нахт',
@@ -778,7 +883,9 @@ async def process_exchange_rate(msg: types.Message, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data == 'skip_comment', state=Form.comment)
 async def skip_comment_btn(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
+    
+    logging.info(f"skip_comment_btn вызван для пользователя {call.from_user.id}")
     
     await state.update_data(comment='-')
     data = await state.get_data()
@@ -794,6 +901,8 @@ async def skip_comment_btn(call: types.CallbackQuery, state: FSMContext):
 # Комментарий (или пропуск)
 @dp.message_handler(state=Form.comment, content_types=types.ContentTypes.TEXT)
 async def process_comment(msg: types.Message, state: FSMContext):
+    logging.info(f"process_comment вызван для пользователя {msg.from_user.id}")
+    
     await state.update_data(comment=msg.text)
     data = await state.get_data()
     # Set and save the final timestamp
@@ -809,7 +918,16 @@ async def process_comment(msg: types.Message, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data in ['confirm_yes', 'confirm_no'], state='confirm')
 async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
+    
+    logging.info(f"process_confirm вызван для пользователя {call.from_user.id} с данными: {call.data}")
+    
+    # Проверяем, не был ли уже обработан этот callback
+    current_state = await state.get_state()
+    if current_state != 'confirm':
+        logging.warning(f"Попытка обработать подтверждение в неправильном состоянии: {current_state}")
+        await safe_answer_callback(call, text='Operatsiya allaqachon bajarilgan!', show_alert=True)
+        return
     
     if call.data == 'confirm_yes':
         data = await state.get_data()
@@ -898,15 +1016,34 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 success = add_to_google_sheet(data)
                 if success:
                     await call.message.answer('✅ Ma\'lumotlar Google Sheets-ga muvaffaqiyatli yuborildi!')
-                    # Jo'natilgandan so'ng, valyutaga qarab E1 yoki G1 natijaviy qiymatini yuboramiz
-                    try:
-                        e1_value, g1_value = get_e1_g1_values()
+                                    # Jo'natilgandan so'ng, valyutaga qarab E1 yoki G1 natijaviy qiymatini yuboramiz
+                try:
+                    e1_value, g1_value = get_e1_g1_values()
+                    
+                    # Проверяем дублирование сообщения о балансе
+                    from datetime import datetime
+                    current_time = datetime.now()
+                    is_duplicate = is_balance_message_duplicate(
+                        call.from_user.id, 
+                        data.get('type', ''), 
+                        data.get('amount', ''), 
+                        data.get('currency_type', ''), 
+                        current_time
+                    )
+                    
+                    if not is_duplicate:
+                        # Отправляем только одну сумму в зависимости от валюты операции
                         if data.get('currency_type') == 'Доллар':
-                            await call.message.answer(f"Qoldi summa dollarda {e1_value}")
+                            logging.info(f"Отправляем баланс в долларах пользователю {call.from_user.id}: {e1_value}")
+                            await call.message.answer(f"💰 Balans: dollarda {e1_value}")
                         else:  # Сом
-                            await call.message.answer(f"Qoldi summa somda {g1_value}")
-                    except Exception as e:
-                        logging.error(f"E1/G1 qiymatlarini yuborishda xatolik: {e}")
+                            logging.info(f"Отправляем баланс в сомах пользователю {call.from_user.id}: {g1_value}")
+                            await call.message.answer(f"💰 Balans: somda {g1_value}")
+                    else:
+                        logging.info(f"Сообщение о балансе для пользователя {call.from_user.id} пропущено как дубликат")
+                        
+                except Exception as e:
+                    logging.error(f"E1/G1 qiymatlarini yuborishda xatolik: {e}")
                 else:
                     await call.message.answer('⚠️ Bu ma\'lumot allaqachon yozilgan. Qayta urinib ko\'rmang.')
 
@@ -915,23 +1052,25 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 summary_text = format_summary(data)
                 admin_notification_text = f"Foydalanuvchi <b>{user_name}</b> tomonidan kiritilgan yangi ma'lumot:\n\n{summary_text}"
                 
-                # Добавляем информацию о балансе для админов
+                # Добавляем информацию о балансе для админов (только один раз)
                 try:
                     e1_value, g1_value = get_e1_g1_values()
                     balance_info = ""
                     if data.get('currency_type') == 'Доллар':
-                        balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa dollarda {e1_value}"
+                        balance_info = f"\n\n💰 <b>Balans:</b>\n💰 Balans: dollarda {e1_value}"
                     else:  # Сом
-                        balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa somda {g1_value}"
+                        balance_info = f"\n\n💰 <b>Balans:</b>\n💰 Balans: somda {g1_value}"
                     admin_notification_text += balance_info
+                    logging.info(f"Информация о балансе добавлена в уведомление для админов: {balance_info.strip()}")
                 except Exception as e:
                     logging.error(f"Balans ma'lumotlarini qo'shishda xatolik: {e}")
                 
                 admins = get_all_admins()
+                logging.info(f"Отправляем уведомления {len(admins)} админам")
                 for admin_id, admin_name, added_date in admins:
                     try:
                         await bot.send_message(admin_id, admin_notification_text)
-                        logging.error(f"✅ Уведомление отправлено админу {admin_id} ({admin_name})")
+                        logging.info(f"✅ Уведомление отправлено админу {admin_id} ({admin_name})")
                     except Exception as e:
                         error_msg = str(e)
                         if "Chat not found" in error_msg:
@@ -947,6 +1086,7 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     else:
         await call.message.answer('❌ Operatsiya bekor qilindi.')
         await state.finish()
+    
     # Возврат к стартовому шагу
     text = "<b>Qaysi turdagi operatsiya?</b>"
     kb = InlineKeyboardMarkup(row_width=2)
@@ -956,18 +1096,17 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
     )
     await call.message.answer(text, reply_markup=kb)
     await Form.type.set()
-    await call.answer()
 
 # Обработка одобрения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('approve_large_'), state='*')
 async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     logging.info(f"Одобрение больших сумм вызвано: {call.data}")
     
     if not is_admin(call.from_user.id):
-        await call.answer('Faqat admin uchun!', show_alert=True)
+        await safe_answer_callback(call, text='Faqat admin uchun!', show_alert=True)
         return
     
     # Парсим данные из callback
@@ -977,6 +1116,12 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
     approval_key = f"{user_id}_{timestamp}"
     
     logging.info(f"Approval key: {approval_key}")
+    
+    # Проверяем, не был ли уже обработан этот ключ одобрения
+    if not check_approval_status(approval_key):
+        logging.warning(f"Ключ одобрения {approval_key} уже был обработан или не существует")
+        await safe_answer_callback(call, text='Bu ariza allaqachon ko\'rib chiqilgan yoki mavjud emas!', show_alert=True)
+        return
     
     try:
         # Получаем сохраненные данные из базы данных
@@ -991,10 +1136,29 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
                 # Jo'natilgandan so'ng, valyutaga qarab E1 yoki G1 natijaviy qiymatini yuboramiz
                 try:
                     e1_value, g1_value = get_e1_g1_values()
-                    if saved_data.get('currency_type') == 'Доллар':
-                        await bot.send_message(user_id, f"Qoldi summa dollarda {e1_value}")
-                    else:  # Сом
-                        await bot.send_message(user_id, f"Qoldi summa somda {g1_value}")
+                    
+                    # Проверяем дублирование сообщения о балансе
+                    from datetime import datetime
+                    current_time = datetime.now()
+                    is_duplicate = is_balance_message_duplicate(
+                        user_id, 
+                        saved_data.get('type', ''), 
+                        saved_data.get('amount', ''), 
+                        saved_data.get('currency_type', ''), 
+                        current_time
+                    )
+                    
+                    if not is_duplicate:
+                        # Отправляем только одну сумму в зависимости от валюты операции
+                        if saved_data.get('currency_type') == 'Доллар':
+                            logging.info(f"Отправляем баланс в долларах пользователю {user_id}: {e1_value}")
+                            await bot.send_message(user_id, f"💰 Balans: dollarda {e1_value}")
+                        else:  # Сом
+                            logging.info(f"Отправляем баланс в сомах пользователю {user_id}: {g1_value}")
+                            await bot.send_message(user_id, f"💰 Balans: somda {g1_value}")
+                    else:
+                        logging.info(f"Сообщение о балансе для пользователя {user_id} пропущено как дубликат")
+                        
                 except Exception as e_val:
                     logging.error(f"E1/G1 qiymatlarini yuborishda xatolik: {e_val}")
             else:
@@ -1026,67 +1190,40 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             )
             await bot.send_message(user_id, text, reply_markup=kb)
             
-            # Уведомляем всех админов об одобренной операции
-            try:
-                e1_value, g1_value = get_e1_g1_values()
-                balance_info = ""
-                if saved_data.get('currency_type') == 'Доллар':
-                    balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa dollarda {e1_value}"
-                else:  # Сом
-                    balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa somda {g1_value}"
-                
-                user_name_text = get_user_name(user_id) or "Noma'lum"
-                admin_approval_text = f"✅ <b>Katta summa tasdiqlandi!</b>\n\nFoydalanuvchi <b>{user_name_text}</b> tomonidan kiritilgan ma'lumot tasdiqlandi va Google Sheet-ga yozildi.{balance_info}"
-                
-                admins = get_all_admins()
-                for admin_id, admin_name, added_date in admins:
-                    if admin_id != call.from_user.id:  # Не отправляем тому, кто одобрил
-                        try:
-                            await bot.send_message(admin_id, admin_approval_text)
-                            logging.info(f"✅ Уведомление об одобрении отправлено админу {admin_id} ({admin_name})")
-                        except Exception as e:
-                            logging.error(f"❌ Ошибка отправки уведомления об одобрении админу {admin_id}: {e}")
-            except Exception as e:
-                logging.error(f"Админам уведомление об одобрении отправить не удалось: {e}")
+            # Отправляем уведомления всем админам об одобрении
+            user_name = get_user_name(user_id) or "Неизвестный пользователь"
+            admin_notification_text = f"✅ <b>Ariza tasdiqlandi!</b>\n\nFoydalanuvchi <b>{user_name}</b> tomonidan kiritilgan ma'lumot tasdiqlandi va Google Sheet-ga yozildi.\n\n{format_summary(saved_data)}"
             
-            # Убираем только кнопки, оставляем оригинальный текст
-            try:
-                await call.message.edit_reply_markup(reply_markup=None)
-            except Exception as edit_error:
-                if "Message is not modified" in str(edit_error):
-                    logging.info("Сообщение уже не имеет кнопок")
-                else:
-                    logging.error(f"Ошибка при удалении кнопок: {edit_error}")
+            admins = get_all_admins()
+            for admin_id, admin_name, added_date in admins:
+                try:
+                    await bot.send_message(admin_id, admin_notification_text)
+                    logging.info(f"✅ Уведомление об одобрении отправлено админу {admin_id} ({admin_name})")
+                except Exception as e:
+                    error_msg = str(e)
+                    if "Chat not found" in error_msg:
+                        logging.error(f"❌ Админ {admin_id} ({admin_name}) не найден в чате")
+                    elif "Forbidden" in error_msg:
+                        logging.error(f"❌ Админ {admin_id} ({admin_name}) заблокировал бота")
+                    else:
+                        logging.error(f"❌ Ошибка отправки уведомления об одобрении админу {admin_id}: {error_msg}")
         else:
-            logging.error(f"Данные не найдены в базе данных для ключа: {approval_key}")
-            # Проверяем, существует ли заявка
-            if check_approval_status(approval_key):
-                await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi. Boshqa admin tomonidan tasdiqlangan bo\'lishi mumkin.', reply_markup=None)
-            else:
-                await call.message.edit_text('❌ Ariza ma\'lumotlari topilmadi.', reply_markup=None)
-        
+            logging.warning(f"Данные для ключа одобрения {approval_key} не найдены")
+            await safe_answer_callback(call, text='Ma\'lumotlar topilmadi!', show_alert=True)
     except Exception as e:
         logging.error(f"Ошибка при одобрении: {e}")
-        try:
-            await call.message.edit_reply_markup(reply_markup=None)
-        except Exception as edit_error:
-            if "Message is not modified" in str(edit_error):
-                logging.info("Сообщение уже не имеет кнопок")
-            else:
-                logging.error(f"Ошибка при удалении кнопок: {edit_error}")
-    
-    await call.answer()
+        await safe_answer_callback(call, text='Xatolik yuz berdi!', show_alert=True)
 
 # Обработка отклонения больших сумм
 @dp.callback_query_handler(lambda c: c.data.startswith('reject_large_'), state='*')
 async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     # Сразу отвечаем на callback чтобы кнопка не "зависла"
-    await call.answer()
+    await safe_answer_callback(call)
     
     logging.info(f"Отклонение больших сумм вызвано: {call.data}")
     
     if not is_admin(call.from_user.id):
-        await call.answer('Faqat admin uchun!', show_alert=True)
+        await safe_answer_callback(call, text='Faqat admin uchun!', show_alert=True)
         return
     
     # Парсим данные из callback
@@ -1096,6 +1233,12 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
     approval_key = f"{user_id}_{timestamp}"
     
     logging.info(f"Rejection key: {approval_key}")
+    
+    # Проверяем, не был ли уже обработан этот ключ одобрения
+    if not check_approval_status(approval_key):
+        logging.warning(f"Ключ одобрения {approval_key} уже был обработан или не существует")
+        await safe_answer_callback(call, text='Bu ariza allaqachon ko\'rib chiqilgan yoki mavjud emas!', show_alert=True)
+        return
     
     try:
         # Отправляем сообщение пользователю
@@ -1150,7 +1293,7 @@ async def reject_large_amount(call: types.CallbackQuery, state: FSMContext):
             else:
                 logging.error(f"Ошибка при удалении кнопок: {edit_error}")
     
-    await call.answer()
+    await safe_answer_callback(call)
 
 # --- Команды для админа ---
 @dp.message_handler(commands=['add_tolov'], state='*')
@@ -1226,7 +1369,7 @@ async def del_tolov_cb(call: types.CallbackQuery):
     conn.commit()
     conn.close()
     await call.message.edit_text(f'❌ To\'lov turi o\'chirildi: {name}')
-    await call.answer()
+    await safe_answer_callback(call)
 
 @dp.message_handler(commands=['edit_tolov'], state='*')
 async def edit_tolov_cmd(msg: types.Message, state: FSMContext):
@@ -1713,21 +1856,47 @@ async def pending_approvals_cmd(msg: types.Message, state: FSMContext):
 async def set_user_commands(dp):
     commands = [
         types.BotCommand("start", "Botni boshlash"),
+        types.BotCommand("reboot", "Qayta boshlash - FSM ni to'xtatish"),
         # Здесь можно добавить другие публичные команды
     ]
     await dp.bot.set_my_commands(commands)
 
 async def notify_all_users(bot):
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT user_id FROM users WHERE status='approved'")
-    rows = c.fetchall()
-    conn.close()
-    for (user_id,) in rows:
-        try:
-            await bot.send_message(user_id, "Iltimos, /start ni bosing va botdan foydalanishni davom eting!")
-        except Exception:
-            pass  # Пользователь мог заблокировать бота или быть недоступен
+    """Отправляет уведомления всем одобренным пользователям"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT user_id FROM users WHERE status='approved'")
+        rows = c.fetchall()
+        conn.close()
+        
+        total_users = len(rows)
+        successful_sends = 0
+        failed_sends = 0
+        
+        logger.info(f"📤 Отправка уведомлений {total_users} пользователям...")
+        
+        for (user_id,) in rows:
+            try:
+                await bot.send_message(user_id, "Iltimos, /start ni bosing va botdan foydalanishni davom eting!")
+                successful_sends += 1
+                # Небольшая задержка между отправками для избежания спама
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                failed_sends += 1
+                error_msg = str(e)
+                if "bot was blocked" in error_msg.lower() or "user is deactivated" in error_msg.lower():
+                    logger.warning(f"⚠️ Пользователь {user_id} заблокировал бота или деактивирован")
+                elif "chat not found" in error_msg.lower():
+                    logger.warning(f"⚠️ Чат с пользователем {user_id} не найден")
+                else:
+                    logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {user_id}: {e}")
+        
+        logger.info(f"✅ Уведомления отправлены: {successful_sends}/{total_users} успешно, {failed_sends} неудачно")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке уведомлений: {e}")
+        raise
 
 # --- Функции для работы с данными одобрения в базе данных ---
 def save_pending_approval(approval_key, user_id, data):
@@ -1843,7 +2012,40 @@ def check_approval_status(approval_key):
 
 if __name__ == '__main__':
     from aiogram import executor
+    import asyncio
+    
     async def on_startup(dp):
-        await set_user_commands(dp)
-        await notify_all_users(dp.bot)
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+        logger.info("🚀 Бот запускается...")
+        try:
+            await set_user_commands(dp)
+            logger.info("✅ Команды бота установлены")
+            await notify_all_users(dp.bot)
+            logger.info("✅ Уведомления отправлены")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при запуске: {e}")
+        logger.info("✅ Бот успешно запущен и готов к работе")
+    
+    async def on_shutdown(dp):
+        logger.info("🛑 Бот останавливается...")
+        try:
+            await dp.storage.close()
+            await dp.storage.wait_closed()
+            logger.info("✅ Хранилище закрыто")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при остановке: {e}")
+    
+    try:
+        logger.info("🔄 Запуск бота...")
+        executor.start_polling(
+            dp, 
+            skip_updates=True, 
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            timeout=60,
+            relax=0.1
+        )
+    except KeyboardInterrupt:
+        logger.info("⏹️ Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при запуске бота: {e}")
+        raise
