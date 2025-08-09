@@ -217,6 +217,31 @@ def get_sheet_names():
         print(f"Ошибка при получении списка листов: {e}")
         return []
 
+def get_e1_g1_values():
+    """Возвращает числовые значения из ячеек E1 и G1 (результат формул, не сами формулы)."""
+    try:
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        worksheet = sh.worksheet(SHEET_NAME)
+
+        # Читаем как неконвертированные значения (без формул)
+        e1 = worksheet.get('E1', value_render_option='UNFORMATTED_VALUE')
+        g1 = worksheet.get('G1', value_render_option='UNFORMATTED_VALUE')
+
+        def extract_single(val):
+            try:
+                return val[0][0] if val and len(val) > 0 and len(val[0]) > 0 else ''
+            except Exception:
+                return ''
+
+        e1_value = extract_single(e1)
+        g1_value = extract_single(g1)
+        return e1_value, g1_value
+    except Exception as e:
+        logging.error(f"E1/G1 ni o'qishda xatolik: {e}")
+        return '', ''
+
 def clean_emoji(text):
     # Удаляет только эмодзи/спецсимволы в начале строки, остальной текст не трогает
     return re.sub(r'^[^\w\s]+', '', text).strip()
@@ -873,6 +898,15 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 success = add_to_google_sheet(data)
                 if success:
                     await call.message.answer('✅ Ma\'lumotlar Google Sheets-ga muvaffaqiyatli yuborildi!')
+                    # Jo'natilgandan so'ng, valyutaga qarab E1 yoki G1 natijaviy qiymatini yuboramiz
+                    try:
+                        e1_value, g1_value = get_e1_g1_values()
+                        if data.get('currency_type') == 'Доллар':
+                            await call.message.answer(f"Qoldi summa dollarda {e1_value}")
+                        else:  # Сом
+                            await call.message.answer(f"Qoldi summa somda {g1_value}")
+                    except Exception as e:
+                        logging.error(f"E1/G1 qiymatlarini yuborishda xatolik: {e}")
                 else:
                     await call.message.answer('⚠️ Bu ma\'lumot allaqachon yozilgan. Qayta urinib ko\'rmang.')
 
@@ -881,11 +915,23 @@ async def process_confirm(call: types.CallbackQuery, state: FSMContext):
                 summary_text = format_summary(data)
                 admin_notification_text = f"Foydalanuvchi <b>{user_name}</b> tomonidan kiritilgan yangi ma'lumot:\n\n{summary_text}"
                 
+                # Добавляем информацию о балансе для админов
+                try:
+                    e1_value, g1_value = get_e1_g1_values()
+                    balance_info = ""
+                    if data.get('currency_type') == 'Доллар':
+                        balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa dollarda {e1_value}"
+                    else:  # Сом
+                        balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa somda {g1_value}"
+                    admin_notification_text += balance_info
+                except Exception as e:
+                    logging.error(f"Balans ma'lumotlarini qo'shishda xatolik: {e}")
+                
                 admins = get_all_admins()
                 for admin_id, admin_name, added_date in admins:
                     try:
                         await bot.send_message(admin_id, admin_notification_text)
-                        logging.info(f"✅ Уведомление отправлено админу {admin_id} ({admin_name})")
+                        logging.error(f"✅ Уведомление отправлено админу {admin_id} ({admin_name})")
                     except Exception as e:
                         error_msg = str(e)
                         if "Chat not found" in error_msg:
@@ -942,6 +988,15 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
             success = add_to_google_sheet(saved_data)
             if success:
                 logging.info("Данные отправлены в Google Sheet")
+                # Jo'natilgandan so'ng, valyutaga qarab E1 yoki G1 natijaviy qiymatini yuboramiz
+                try:
+                    e1_value, g1_value = get_e1_g1_values()
+                    if saved_data.get('currency_type') == 'Доллар':
+                        await bot.send_message(user_id, f"Qoldi summa dollarda {e1_value}")
+                    else:  # Сом
+                        await bot.send_message(user_id, f"Qoldi summa somda {g1_value}")
+                except Exception as e_val:
+                    logging.error(f"E1/G1 qiymatlarini yuborishda xatolik: {e_val}")
             else:
                 logging.info("Дублирование предотвращено при одобрении")
             
@@ -970,6 +1025,29 @@ async def approve_large_amount(call: types.CallbackQuery, state: FSMContext):
                 InlineKeyboardButton('🔴 Чиқим', callback_data='type_chiqim')
             )
             await bot.send_message(user_id, text, reply_markup=kb)
+            
+            # Уведомляем всех админов об одобренной операции
+            try:
+                e1_value, g1_value = get_e1_g1_values()
+                balance_info = ""
+                if saved_data.get('currency_type') == 'Доллар':
+                    balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa dollarda {e1_value}"
+                else:  # Сом
+                    balance_info = f"\n\n💰 <b>Balans:</b>\nQoldi summa somda {g1_value}"
+                
+                user_name_text = get_user_name(user_id) or "Noma'lum"
+                admin_approval_text = f"✅ <b>Katta summa tasdiqlandi!</b>\n\nFoydalanuvchi <b>{user_name_text}</b> tomonidan kiritilgan ma'lumot tasdiqlandi va Google Sheet-ga yozildi.{balance_info}"
+                
+                admins = get_all_admins()
+                for admin_id, admin_name, added_date in admins:
+                    if admin_id != call.from_user.id:  # Не отправляем тому, кто одобрил
+                        try:
+                            await bot.send_message(admin_id, admin_approval_text)
+                            logging.info(f"✅ Уведомление об одобрении отправлено админу {admin_id} ({admin_name})")
+                        except Exception as e:
+                            logging.error(f"❌ Ошибка отправки уведомления об одобрении админу {admin_id}: {e}")
+            except Exception as e:
+                logging.error(f"Админам уведомление об одобрении отправить не удалось: {e}")
             
             # Убираем только кнопки, оставляем оригинальный текст
             try:
